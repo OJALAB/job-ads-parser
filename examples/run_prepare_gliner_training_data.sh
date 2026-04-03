@@ -12,11 +12,9 @@ WINDOW_STRIDE="${WINDOW_STRIDE:-300}"
 DEV_RATIO="${DEV_RATIO:-0.25}"
 SEED="${SEED:-42}"
 KEEP_EMPTY="${KEEP_EMPTY:-0}"
+TRAIN_FILE="${TRAIN_FILE:-$PROJECT_DIR/examples/train_gold_skills_pl.jsonl}"
 
-INPUT_FILES=(
-  "$PROJECT_DIR/examples/eval_gold_skills_pl.jsonl"
-  "$PROJECT_DIR/examples/eval_gold_skills_pl_hard.jsonl"
-)
+INPUT_FILES=("$TRAIN_FILE")
 
 CMD=(
   "$PYTHON_BIN" -m esco_skill_batch prepare-gliner-data
