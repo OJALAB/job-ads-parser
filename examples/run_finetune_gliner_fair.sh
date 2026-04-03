@@ -10,6 +10,7 @@ MODEL_DIR="$RUN_DIR/model"
 BASELINE_DIR="$RUN_DIR/baseline"
 FINETUNED_DIR="$RUN_DIR/finetuned"
 GLINER_BASE_MODEL="${GLINER_BASE_MODEL:-urchade/gliner_large-v2.1}"
+DEVICE="${DEVICE:-auto}"
 MAX_STEPS="${MAX_STEPS:-250}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-2}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-2}"
@@ -24,7 +25,7 @@ cd "$PROJECT_DIR"
 PYTHON_BIN="$PYTHON_BIN" OUTPUT_DIR="$DATA_DIR" bash "$PROJECT_DIR/examples/run_prepare_gliner_training_data.sh"
 
 if [[ "$RUN_BASELINE" == "1" ]]; then
-  GLINER_MODEL="$GLINER_BASE_MODEL" OUTPUT_DIR="$BASELINE_DIR" bash "$PROJECT_DIR/examples/run_eval_gliner_suite.sh"
+  GLINER_MODEL="$GLINER_BASE_MODEL" OUTPUT_DIR="$BASELINE_DIR" DEVICE="$DEVICE" bash "$PROJECT_DIR/examples/run_eval_gliner_suite.sh"
 fi
 
 PYTHONPATH=src "$PYTHON_BIN" -m esco_skill_batch train-gliner \
@@ -38,9 +39,9 @@ PYTHONPATH=src "$PYTHON_BIN" -m esco_skill_batch train-gliner \
   --save-steps "$SAVE_STEPS" \
   --logging-steps "$LOGGING_STEPS" \
   --save-total-limit 2 \
-  --use-cpu
+  --device "$DEVICE"
 
-GLINER_MODEL="$MODEL_DIR/final-model" OUTPUT_DIR="$FINETUNED_DIR" bash "$PROJECT_DIR/examples/run_eval_gliner_suite.sh"
+GLINER_MODEL="$MODEL_DIR/final-model" OUTPUT_DIR="$FINETUNED_DIR" DEVICE="$DEVICE" bash "$PROJECT_DIR/examples/run_eval_gliner_suite.sh"
 
 if [[ "$RUN_BASELINE" == "1" ]]; then
   "$PYTHON_BIN" "$PROJECT_DIR/examples/compare_model_benchmarks.py" \
@@ -53,6 +54,7 @@ fi
 echo
 echo "Prepared data: $DATA_DIR"
 echo "Base model: $GLINER_BASE_MODEL"
+echo "Device: $DEVICE"
 if [[ "$RUN_BASELINE" == "1" ]]; then
   echo "Baseline evaluation: $BASELINE_DIR"
 fi

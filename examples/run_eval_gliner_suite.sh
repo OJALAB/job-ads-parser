@@ -7,6 +7,7 @@ ESCO_CSV="${ESCO_CSV:-$PROJECT_DIR/examples/sample_esco_skills.csv}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/.demo/eval-suite/gliner}"
 GLINER_MODEL="${GLINER_MODEL:-urchade/gliner_large-v2.1}"
 GLINER_THRESHOLD="${GLINER_THRESHOLD:-0.35}"
+DEVICE="${DEVICE:-auto}"
 TOP_K="${TOP_K:-5}"
 
 cd "$PROJECT_DIR"
@@ -37,6 +38,7 @@ for case_name in easy hard; do
     --extractor gliner \
     --gliner-model "$GLINER_MODEL" \
     --gliner-threshold "$GLINER_THRESHOLD" \
+    --device "$DEVICE" \
     --mapping-backend lexical \
     --top-k "$TOP_K"
 

@@ -20,6 +20,7 @@ from esco_skill_batch.gliner_training import prepare_gliner_datasets, train_glin
 from esco_skill_batch.io_utils import count_records, read_records
 from esco_skill_batch.matching import EmbeddingMatcher, HybridMatcher, LexicalMatcher, build_embeddings
 from esco_skill_batch.prompt_presets import OLLAMA_PROMPT_PRESETS, resolve_ollama_system_prompt
+from esco_skill_batch.runtime import resolve_device_argument
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--extractor",
         choices=["ollama", "gliner", "hf_token_classifier", "passthrough"],
         default="ollama",
+    )
+    extract_batch.add_argument(
+        "--device",
+        default="auto",
+        help="Execution device for HF-backed extractors: auto, cpu, cuda, cuda:0, cuda:1.",
     )
     extract_batch.add_argument(
         "--mapping-backend",
@@ -89,7 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Comma-separated HF token classification labels to keep. Empty means keep all non-O entities.",
     )
-    extract_batch.add_argument("--hf-device", type=int, default=-1, help="HF pipeline device. Use -1 for CPU.")
+    extract_batch.add_argument(
+        "--hf-device",
+        type=int,
+        default=None,
+        help="Deprecated alias for --device. Use -1 for CPU or >=0 for a CUDA index.",
+    )
     extract_batch.add_argument("--top-k", type=int, default=5)
     extract_batch.add_argument("--score-threshold", type=float, default=0.35)
     extract_batch.add_argument("--max-records", type=int, default=None)
@@ -171,7 +182,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_gliner.add_argument("--dataloader-num-workers", type=int, default=0)
     train_gliner.add_argument("--freeze-components", default="")
     train_gliner.add_argument("--seed", type=int, default=42)
-    train_gliner.add_argument("--use-cpu", action="store_true")
+    train_gliner.add_argument(
+        "--device",
+        default="auto",
+        help="Training device: auto, cpu, cuda, cuda:0, cuda:1.",
+    )
+    train_gliner.add_argument("--use-cpu", action="store_true", help="Deprecated alias for --device cpu.")
     train_gliner.add_argument("--bf16", action="store_true")
     train_gliner.add_argument("--compile-model", action="store_true")
 
@@ -247,15 +263,21 @@ def _make_extractor(args: argparse.Namespace):
         )
     if args.extractor == "hf_token_classifier":
         entity_labels = [item.strip() for item in args.hf_entity_labels.split(",") if item.strip()]
+        resolved_device = resolve_device_argument(
+            device=args.device,
+            hf_device_alias=args.hf_device,
+        )
         return HFTokenClassificationExtractor(
             model_name=args.hf_model,
             aggregation_strategy=args.hf_aggregation_strategy,
             entity_labels=entity_labels,
-            device=args.hf_device,
+            device=resolved_device.resolved,
         )
+    resolved_device = resolve_device_argument(device=args.device)
     return GLiNERExtractor(
         model_name=args.gliner_model,
         threshold=args.gliner_threshold,
+        device=resolved_device.resolved,
     )
 
 
@@ -378,6 +400,10 @@ def run_prepare_gliner_data(args: argparse.Namespace) -> None:
 
 def run_train_gliner(args: argparse.Namespace) -> None:
     freeze_components = [item.strip() for item in args.freeze_components.split(",") if item.strip()]
+    resolved_device = resolve_device_argument(
+        device=args.device,
+        use_cpu_alias=args.use_cpu,
+    )
     summary = train_gliner_model(
         train_data=args.train_data,
         dev_data=args.dev_data,
@@ -405,7 +431,7 @@ def run_train_gliner(args: argparse.Namespace) -> None:
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         dataloader_num_workers=args.dataloader_num_workers,
         freeze_components=freeze_components or None,
-        use_cpu=args.use_cpu,
+        device=resolved_device.resolved,
         bf16=args.bf16,
         compile_model=args.compile_model,
         seed=args.seed,

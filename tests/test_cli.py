@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from esco_skill_batch import cli
 from esco_skill_batch.prompt_presets import BIELIK_PL_OLLAMA_PROMPT
+from esco_skill_batch.runtime import ResolvedDevice
 from tests.helpers import write_esco_csv
 
 
@@ -140,15 +141,79 @@ class CliTests(unittest.TestCase):
             ]
         )
 
-        with patch("esco_skill_batch.cli.HFTokenClassificationExtractor") as extractor_cls:
+        with patch(
+            "esco_skill_batch.cli.resolve_device_argument",
+            return_value=ResolvedDevice(
+                requested="auto",
+                resolved="cuda:0",
+                use_cpu=False,
+                hf_device=0,
+                cuda_index=0,
+            ),
+        ), patch("esco_skill_batch.cli.HFTokenClassificationExtractor") as extractor_cls:
             cli._make_extractor(args)
 
         extractor_cls.assert_called_once_with(
             model_name="jjzha/escoxlmr_skill_extraction",
             aggregation_strategy="simple",
             entity_labels=["SKILL", "TRANSVERSAL"],
-            device=-1,
+            device="cuda:0",
         )
+
+    def test_make_extractor_legacy_hf_device_minus_one_maps_to_cpu(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "extract-batch",
+                "--input",
+                "dummy.jsonl",
+                "--output",
+                "dummy-out.jsonl",
+                "--index-dir",
+                "dummy-index",
+                "--extractor",
+                "hf_token_classifier",
+                "--hf-device",
+                "-1",
+            ]
+        )
+
+        with patch("esco_skill_batch.cli.HFTokenClassificationExtractor") as extractor_cls:
+            cli._make_extractor(args)
+
+        self.assertEqual(extractor_cls.call_args.kwargs["device"], "cpu")
+
+    def test_make_extractor_uses_gliner_with_resolved_device(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "extract-batch",
+                "--input",
+                "dummy.jsonl",
+                "--output",
+                "dummy-out.jsonl",
+                "--index-dir",
+                "dummy-index",
+                "--extractor",
+                "gliner",
+                "--device",
+                "auto",
+            ]
+        )
+
+        with patch(
+            "esco_skill_batch.cli.resolve_device_argument",
+            return_value=ResolvedDevice(
+                requested="auto",
+                resolved="cuda:0",
+                use_cpu=False,
+                hf_device=0,
+                cuda_index=0,
+            ),
+        ), patch("esco_skill_batch.cli.GLiNERExtractor") as extractor_cls:
+            cli._make_extractor(args)
+
+        self.assertEqual(extractor_cls.call_args.kwargs["device"], "cuda:0")
 
     def test_cli_evaluate_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -265,11 +330,39 @@ class CliTests(unittest.TestCase):
             ]
         )
 
-        with patch("esco_skill_batch.cli.train_gliner_model", return_value={"status": "ok"}) as train_helper:
+        with patch(
+            "esco_skill_batch.cli.resolve_device_argument",
+            return_value=ResolvedDevice(
+                requested="auto",
+                resolved="cuda:0",
+                use_cpu=False,
+                hf_device=0,
+                cuda_index=0,
+            ),
+        ), patch("esco_skill_batch.cli.train_gliner_model", return_value={"status": "ok"}) as train_helper:
             cli.run_train_gliner(args)
 
         train_helper.assert_called_once()
         self.assertEqual(train_helper.call_args.kwargs["freeze_components"], ["text_encoder", "labels_encoder"])
+        self.assertEqual(train_helper.call_args.kwargs["device"], "cuda:0")
+
+    def test_cli_train_gliner_use_cpu_alias_maps_to_cpu(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "train-gliner",
+                "--train-data",
+                "train.json",
+                "--output-dir",
+                "model-out",
+                "--use-cpu",
+            ]
+        )
+
+        with patch("esco_skill_batch.cli.train_gliner_model", return_value={"status": "ok"}) as train_helper:
+            cli.run_train_gliner(args)
+
+        self.assertEqual(train_helper.call_args.kwargs["device"], "cpu")
 
     def test_cli_report_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

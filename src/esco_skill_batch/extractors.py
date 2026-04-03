@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 from esco_skill_batch.normalization import normalize_extracted_skill_mention
 from esco_skill_batch.prompt_presets import DEFAULT_OLLAMA_PROMPT
+from esco_skill_batch.runtime import resolve_device_spec
 from esco_skill_batch.text_utils import unique_preserve_order
 from esco_skill_batch.types import SkillMention
 
@@ -148,13 +149,22 @@ class OllamaExtractor:
 
 
 class GLiNERExtractor:
-    def __init__(self, model_name: str, threshold: float, labels: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        threshold: float,
+        labels: list[str] | None = None,
+        device: str = "auto",
+    ) -> None:
         try:
             from gliner import GLiNER
         except ImportError as exc:
             raise RuntimeError("GLiNER extractor requires `gliner`. Install with `.[gliner]`.") from exc
 
+        self.resolved_device = resolve_device_spec(device)
         self.model = GLiNER.from_pretrained(model_name)
+        self.model.to(self.resolved_device.resolved)
+        self.model.eval()
         self.threshold = threshold
         self.labels = labels or ["skill", "transversal skill", "tool", "technology", "framework"]
 
@@ -188,7 +198,7 @@ class HFTokenClassificationExtractor:
         model_name: str,
         aggregation_strategy: str = "simple",
         entity_labels: list[str] | None = None,
-        device: int = -1,
+        device: str = "auto",
     ) -> None:
         try:
             import torch
@@ -211,10 +221,8 @@ class HFTokenClassificationExtractor:
         max_length = int(getattr(self.model.config, "max_position_embeddings", 512))
         self.max_length = max_length if max_length > 0 else 512
 
-        if device >= 0 and torch.cuda.is_available():
-            self.device = torch.device(f"cuda:{device}")
-        else:
-            self.device = torch.device("cpu")
+        self.resolved_device = resolve_device_spec(device)
+        self.device = torch.device(self.resolved_device.resolved)
         self.model.to(self.device)
         self.model.eval()
 

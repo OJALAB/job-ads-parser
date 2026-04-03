@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from esco_skill_batch.io_utils import read_records
+from esco_skill_batch.runtime import resolve_device_spec
 from esco_skill_batch.text_utils import strip_accents
 
 
@@ -371,7 +372,7 @@ def train_gliner_model(
     gradient_accumulation_steps: int,
     dataloader_num_workers: int,
     freeze_components: list[str] | None,
-    use_cpu: bool,
+    device: str,
     bf16: bool,
     compile_model: bool,
     seed: int,
@@ -387,6 +388,10 @@ def train_gliner_model(
 
     train_dataset = _load_json_dataset(train_data)
     dev_dataset = _load_json_dataset(dev_data) if dev_data is not None and dev_data.exists() else []
+    resolved_device = resolve_device_spec(device)
+
+    if resolved_device.cuda_index is not None:
+        torch.cuda.set_device(resolved_device.cuda_index)
 
     model = GLiNER.from_pretrained(model_name)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -416,7 +421,7 @@ def train_gliner_model(
         lr_scheduler_type=scheduler_type,
         dataloader_num_workers=dataloader_num_workers,
         gradient_accumulation_steps=gradient_accumulation_steps,
-        use_cpu=use_cpu or not torch.cuda.is_available(),
+        use_cpu=resolved_device.use_cpu,
         bf16=bf16,
         report_to="none",
         freeze_components=freeze_components,
@@ -439,7 +444,8 @@ def train_gliner_model(
         "gradient_accumulation_steps": gradient_accumulation_steps,
         "learning_rate": learning_rate,
         "others_learning_rate": others_learning_rate,
-        "used_cpu": bool(use_cpu or not torch.cuda.is_available()),
+        "resolved_device": resolved_device.resolved,
+        "used_cpu": resolved_device.use_cpu,
         "bf16": bool(bf16),
         "freeze_components": freeze_components or [],
         "best_checkpoint": str(getattr(trainer.state, "best_model_checkpoint", "") or ""),

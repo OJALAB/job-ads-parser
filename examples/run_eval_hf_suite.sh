@@ -8,8 +8,21 @@ OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/.demo/eval-suite/hf-token}"
 HF_MODEL="${HF_MODEL:-jjzha/escoxlmr_skill_extraction}"
 HF_AGGREGATION_STRATEGY="${HF_AGGREGATION_STRATEGY:-simple}"
 HF_ENTITY_LABELS="${HF_ENTITY_LABELS:-}"
-HF_DEVICE="${HF_DEVICE:--1}"
+HF_DEVICE="${HF_DEVICE:-}"
+DEVICE="${DEVICE:-}"
 TOP_K="${TOP_K:-5}"
+
+if [[ -z "$DEVICE" ]]; then
+  if [[ -n "$HF_DEVICE" ]]; then
+    if [[ "$HF_DEVICE" == "-1" ]]; then
+      DEVICE="cpu"
+    else
+      DEVICE="cuda:$HF_DEVICE"
+    fi
+  else
+    DEVICE="auto"
+  fi
+fi
 
 cd "$PROJECT_DIR"
 mkdir -p "$OUTPUT_DIR"
@@ -40,7 +53,7 @@ for case_name in easy hard; do
     --hf-model "$HF_MODEL" \
     --hf-aggregation-strategy "$HF_AGGREGATION_STRATEGY" \
     --hf-entity-labels "$HF_ENTITY_LABELS" \
-    --hf-device "$HF_DEVICE" \
+    --device "$DEVICE" \
     --mapping-backend lexical \
     --top-k "$TOP_K"
 

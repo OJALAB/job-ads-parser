@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import json
 import socket
+import types
 import unittest
 import urllib.error
 from unittest.mock import patch
 
-from esco_skill_batch.extractors import OllamaExtractor, PassthroughExtractor, _decode_hf_token_predictions
+from esco_skill_batch.extractors import (
+    GLiNERExtractor,
+    HFTokenClassificationExtractor,
+    OllamaExtractor,
+    PassthroughExtractor,
+    _decode_hf_token_predictions,
+)
 from esco_skill_batch.normalization import normalize_extracted_skill_mention
 from esco_skill_batch.prompt_presets import BIELIK_PL_OLLAMA_PROMPT
 
@@ -203,6 +210,72 @@ class ExtractorTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in mentions], ["Python", "SQL"])
         self.assertEqual([item.label for item in mentions], ["skill", "skill"])
+
+    def test_gliner_extractor_moves_model_to_resolved_device(self) -> None:
+        fake_model = types.SimpleNamespace(
+            to_calls=[],
+            predict_entities=lambda *args, **kwargs: [],
+        )
+        fake_model.to = lambda device: fake_model.to_calls.append(device) or fake_model
+        fake_model.eval = lambda: None
+
+        class FakeGLiNER:
+            @staticmethod
+            def from_pretrained(model_name):
+                return fake_model
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True, device_count=lambda: 1)
+
+        with patch.dict("sys.modules", {"gliner": types.SimpleNamespace(GLiNER=FakeGLiNER), "torch": fake_torch}):
+            GLiNERExtractor(model_name="urchade/gliner_large-v2.1", threshold=0.35, device="cuda:0")
+
+        self.assertEqual(fake_model.to_calls, ["cuda:0"])
+
+    def test_hf_token_classifier_moves_model_to_expected_device(self) -> None:
+        fake_torch = types.ModuleType("torch")
+        fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True, device_count=lambda: 2)
+        fake_torch.device = lambda name: name
+
+        class FakeTokenizer:
+            is_fast = True
+
+            @staticmethod
+            def from_pretrained(model_name, use_fast=True):
+                return FakeTokenizer()
+
+        class FakeModel:
+            def __init__(self) -> None:
+                self.to_calls: list[str] = []
+                self.eval_called = False
+                self.config = types.SimpleNamespace(
+                    id2label={0: "O", 1: "B"},
+                    max_position_embeddings=512,
+                )
+
+            def to(self, device):
+                self.to_calls.append(device)
+                return self
+
+            def eval(self):
+                self.eval_called = True
+
+        fake_model = FakeModel()
+
+        class FakeAutoModelForTokenClassification:
+            @staticmethod
+            def from_pretrained(model_name):
+                return fake_model
+
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.AutoTokenizer = FakeTokenizer
+        fake_transformers.AutoModelForTokenClassification = FakeAutoModelForTokenClassification
+
+        with patch.dict("sys.modules", {"torch": fake_torch, "transformers": fake_transformers}):
+            HFTokenClassificationExtractor(model_name="fake-model", device="cuda:1")
+
+        self.assertEqual(fake_model.to_calls, ["cuda:1"])
+        self.assertTrue(fake_model.eval_called)
 
 
 if __name__ == "__main__":
