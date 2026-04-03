@@ -16,6 +16,7 @@ from esco_skill_batch.extractors import (
     PassthroughExtractor,
     mentions_to_json,
 )
+from esco_skill_batch.gliner_training import prepare_gliner_datasets, train_gliner_model
 from esco_skill_batch.io_utils import count_records, read_records
 from esco_skill_batch.matching import EmbeddingMatcher, HybridMatcher, LexicalMatcher, build_embeddings
 from esco_skill_batch.prompt_presets import OLLAMA_PROMPT_PRESETS, resolve_ollama_system_prompt
@@ -106,6 +107,73 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--output", required=True, type=Path)
     report.add_argument("--top-k", type=int, default=5)
     report.add_argument("--format", choices=["markdown", "json"], default="markdown")
+
+    prepare_gliner = subparsers.add_parser(
+        "prepare-gliner-data",
+        help="Convert labeled JSONL/JSON data into GLiNER training files.",
+    )
+    prepare_gliner.add_argument("--input", required=True, nargs="+", type=Path)
+    prepare_gliner.add_argument("--output-dir", required=True, type=Path)
+    prepare_gliner.add_argument("--text-field", default="description")
+    prepare_gliner.add_argument("--skills-field", default="gold_skills")
+    prepare_gliner.add_argument("--label", default="skill")
+    prepare_gliner.add_argument("--dev-ratio", type=float, default=0.2)
+    prepare_gliner.add_argument("--seed", type=int, default=42)
+    prepare_gliner.add_argument(
+        "--keep-empty",
+        action="store_true",
+        help="Keep windows without any skills as negative training examples.",
+    )
+    prepare_gliner.add_argument(
+        "--max-tokens",
+        type=int,
+        default=300,
+        help="Split long records into windows of at most this many tokens. Use 0 to disable chunking.",
+    )
+    prepare_gliner.add_argument(
+        "--window-stride",
+        type=int,
+        default=300,
+        help="Stride between token windows when chunking long records.",
+    )
+    prepare_gliner.add_argument("--max-records", type=int, default=None)
+    prepare_gliner.add_argument(
+        "--fail-on-unmatched",
+        action="store_true",
+        help="Stop if a labeled mention cannot be aligned back into the source text.",
+    )
+
+    train_gliner = subparsers.add_parser("train-gliner", help="Fine-tune a GLiNER model on prepared JSON data.")
+    train_gliner.add_argument("--train-data", required=True, type=Path)
+    train_gliner.add_argument("--dev-data", type=Path, default=None)
+    train_gliner.add_argument("--model-name", default="urchade/gliner_large-v2.1")
+    train_gliner.add_argument("--output-dir", required=True, type=Path)
+    train_gliner.add_argument("--learning-rate", type=float, default=1e-5)
+    train_gliner.add_argument("--others-learning-rate", type=float, default=3e-5)
+    train_gliner.add_argument("--weight-decay", type=float, default=0.1)
+    train_gliner.add_argument("--others-weight-decay", type=float, default=0.01)
+    train_gliner.add_argument("--warmup-ratio", type=float, default=0.05)
+    train_gliner.add_argument("--train-batch-size", type=int, default=2)
+    train_gliner.add_argument("--eval-batch-size", type=int, default=2)
+    train_gliner.add_argument("--max-steps", type=int, default=250)
+    train_gliner.add_argument("--save-steps", type=int, default=50)
+    train_gliner.add_argument("--logging-steps", type=int, default=10)
+    train_gliner.add_argument("--save-total-limit", type=int, default=2)
+    train_gliner.add_argument("--max-grad-norm", type=float, default=10.0)
+    train_gliner.add_argument("--negatives", type=float, default=1.0)
+    train_gliner.add_argument("--loss-alpha", type=float, default=0.75)
+    train_gliner.add_argument("--loss-gamma", type=float, default=0.0)
+    train_gliner.add_argument("--loss-prob-margin", type=float, default=0.0)
+    train_gliner.add_argument("--loss-reduction", default="sum")
+    train_gliner.add_argument("--masking", default="none")
+    train_gliner.add_argument("--scheduler-type", default="cosine")
+    train_gliner.add_argument("--gradient-accumulation-steps", type=int, default=1)
+    train_gliner.add_argument("--dataloader-num-workers", type=int, default=0)
+    train_gliner.add_argument("--freeze-components", default="")
+    train_gliner.add_argument("--seed", type=int, default=42)
+    train_gliner.add_argument("--use-cpu", action="store_true")
+    train_gliner.add_argument("--bf16", action="store_true")
+    train_gliner.add_argument("--compile-model", action="store_true")
 
     return parser
 
@@ -290,6 +358,61 @@ def run_extract_batch(args: argparse.Namespace) -> None:
     )
 
 
+def run_prepare_gliner_data(args: argparse.Namespace) -> None:
+    manifest = prepare_gliner_datasets(
+        input_paths=args.input,
+        output_dir=args.output_dir,
+        text_field=args.text_field,
+        skills_field=args.skills_field,
+        label=args.label,
+        dev_ratio=args.dev_ratio,
+        seed=args.seed,
+        keep_empty=args.keep_empty,
+        max_tokens=None if args.max_tokens == 0 else args.max_tokens,
+        window_stride=None if args.window_stride == 0 else args.window_stride,
+        max_records=args.max_records,
+        fail_on_unmatched=args.fail_on_unmatched,
+    )
+    print(json.dumps(manifest, ensure_ascii=False))
+
+
+def run_train_gliner(args: argparse.Namespace) -> None:
+    freeze_components = [item.strip() for item in args.freeze_components.split(",") if item.strip()]
+    summary = train_gliner_model(
+        train_data=args.train_data,
+        dev_data=args.dev_data,
+        model_name=args.model_name,
+        output_dir=args.output_dir,
+        learning_rate=args.learning_rate,
+        others_learning_rate=args.others_learning_rate,
+        weight_decay=args.weight_decay,
+        others_weight_decay=args.others_weight_decay,
+        warmup_ratio=args.warmup_ratio,
+        train_batch_size=args.train_batch_size,
+        eval_batch_size=args.eval_batch_size,
+        max_steps=args.max_steps,
+        save_steps=args.save_steps,
+        logging_steps=args.logging_steps,
+        save_total_limit=args.save_total_limit,
+        max_grad_norm=args.max_grad_norm,
+        negatives=args.negatives,
+        loss_alpha=args.loss_alpha,
+        loss_gamma=args.loss_gamma,
+        loss_prob_margin=args.loss_prob_margin,
+        loss_reduction=args.loss_reduction,
+        masking=args.masking,
+        scheduler_type=args.scheduler_type,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        dataloader_num_workers=args.dataloader_num_workers,
+        freeze_components=freeze_components or None,
+        use_cpu=args.use_cpu,
+        bf16=args.bf16,
+        compile_model=args.compile_model,
+        seed=args.seed,
+    )
+    print(json.dumps(summary, ensure_ascii=False))
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -317,5 +440,11 @@ def main() -> None:
                 encoding="utf-8",
             )
         print(json.dumps({"status": "ok", "output": str(args.output), "format": args.format}, ensure_ascii=False))
+        return
+    if args.command == "prepare-gliner-data":
+        run_prepare_gliner_data(args)
+        return
+    if args.command == "train-gliner":
+        run_train_gliner(args)
         return
     parser.error(f"Unknown command: {args.command}")

@@ -196,6 +196,81 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["mapping_top1_accuracy"], 1.0)
 
+    def test_cli_prepare_gliner_data_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            gold_path = base / "gold.jsonl"
+            gold_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "id": "job-1",
+                                "description": "Python i SQL",
+                                "gold_skills": [{"mention": "Python"}, {"mention": "SQL"}],
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "job-2",
+                                "description": "kompetencje komunikacyjne",
+                                "gold_skills": [{"mention": "kompetencje komunikacyjne"}],
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            output_dir = base / "gliner-data"
+            stdout = StringIO()
+            with patch("sys.stdout", stdout), patch(
+                "sys.argv",
+                [
+                    "esco-skill-batch",
+                    "prepare-gliner-data",
+                    "--input",
+                    str(gold_path),
+                    "--output-dir",
+                    str(output_dir),
+                    "--dev-ratio",
+                    "0.5",
+                    "--max-tokens",
+                    "0",
+                    "--window-stride",
+                    "0",
+                ],
+            ):
+                cli.main()
+
+            result = json.loads(stdout.getvalue().strip())
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue((output_dir / "train.json").exists())
+            self.assertTrue((output_dir / "dev.json").exists())
+
+    def test_cli_train_gliner_command_delegates_to_helper(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "train-gliner",
+                "--train-data",
+                "train.json",
+                "--dev-data",
+                "dev.json",
+                "--output-dir",
+                "model-out",
+                "--freeze-components",
+                "text_encoder,labels_encoder",
+            ]
+        )
+
+        with patch("esco_skill_batch.cli.train_gliner_model", return_value={"status": "ok"}) as train_helper:
+            cli.run_train_gliner(args)
+
+        train_helper.assert_called_once()
+        self.assertEqual(train_helper.call_args.kwargs["freeze_components"], ["text_encoder", "labels_encoder"])
+
     def test_cli_report_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
