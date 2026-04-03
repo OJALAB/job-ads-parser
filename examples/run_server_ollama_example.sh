@@ -16,6 +16,7 @@ INDEX_DIR="${INDEX_DIR:-$PROJECT_DIR/.server/index}"
 OUTPUT_FILE="${OUTPUT_FILE:-$PROJECT_DIR/.server/results.jsonl}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:14b}"
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
+OLLAMA_PROMPT_PRESET="${OLLAMA_PROMPT_PRESET:-default_en}"
 TEXT_FIELD="${TEXT_FIELD:-description}"
 ID_FIELD="${ID_FIELD:-id}"
 MAPPING_BACKEND="${MAPPING_BACKEND:-lexical}"
@@ -38,6 +39,7 @@ PYTHONPATH="${PYTHONPATH:-src}" "$PYTHON_BIN" -m esco_skill_batch extract-batch 
   --ollama-model "$OLLAMA_MODEL" \
   --ollama-url "$OLLAMA_URL" \
   --ollama-timeout-seconds "$OLLAMA_TIMEOUT_SECONDS" \
+  --ollama-prompt-preset "$OLLAMA_PROMPT_PRESET" \
   --mapping-backend "$MAPPING_BACKEND" \
   --top-k "$TOP_K" \
   --score-threshold "$SCORE_THRESHOLD"

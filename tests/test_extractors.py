@@ -7,6 +7,7 @@ import urllib.error
 from unittest.mock import patch
 
 from esco_skill_batch.extractors import OllamaExtractor, PassthroughExtractor
+from esco_skill_batch.prompt_presets import BIELIK_PL_OLLAMA_PROMPT
 
 
 class FakeResponse:
@@ -23,6 +24,17 @@ class FakeResponse:
         return False
 
 
+class RequestRecorder:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        self.request_bodies: list[dict] = []
+
+    def __call__(self, request, timeout):
+        body = request.data.decode("utf-8")
+        self.request_bodies.append(json.loads(body))
+        return FakeResponse(self.payload)
+
+
 class ExtractorTests(unittest.TestCase):
     def test_passthrough_extractor_deduplicates_pipe_separated_values(self) -> None:
         extractor = PassthroughExtractor("skills_raw")
@@ -35,6 +47,22 @@ class ExtractorTests(unittest.TestCase):
         extractor = PassthroughExtractor("skills_raw")
 
         mentions = extractor.extract({"skills_raw": ["Python", "Python", "SQL", ""]}, "")
+
+        self.assertEqual([item.text for item in mentions], ["Python", "SQL"])
+
+    def test_passthrough_extractor_handles_list_of_objects(self) -> None:
+        extractor = PassthroughExtractor("gold_skills")
+
+        mentions = extractor.extract(
+            {
+                "gold_skills": [
+                    {"mention": "Python", "esco_uri": "uri:python"},
+                    {"mention": "SQL", "esco_uri": "uri:sql"},
+                    {"mention": "Python", "esco_uri": "uri:python"},
+                ]
+            },
+            "",
+        )
 
         self.assertEqual([item.text for item in mentions], ["Python", "SQL"])
 
@@ -63,6 +91,25 @@ class ExtractorTests(unittest.TestCase):
             mentions = extractor.extract({}, "Need Python and SQL")
 
         self.assertEqual([item.text for item in mentions], ["Python", "SQL"])
+
+    def test_ollama_extractor_uses_custom_system_prompt(self) -> None:
+        extractor = OllamaExtractor(
+            model="bielik-pl:4.5b",
+            base_url="http://127.0.0.1:11434",
+            timeout_seconds=10,
+            temperature=0.0,
+            system_prompt=BIELIK_PL_OLLAMA_PROMPT,
+        )
+        payload = {"message": {"content": json.dumps({"skills": []})}}
+        recorder = RequestRecorder(payload)
+
+        with patch("urllib.request.urlopen", side_effect=recorder):
+            extractor.extract({}, "Szukamy osoby z Python i SQL")
+
+        self.assertEqual(
+            recorder.request_bodies[0]["messages"][0]["content"],
+            BIELIK_PL_OLLAMA_PROMPT,
+        )
 
     def test_ollama_extractor_wraps_connection_errors(self) -> None:
         extractor = OllamaExtractor(

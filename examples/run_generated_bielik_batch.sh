@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="${PROJECT_DIR:-$PWD}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-bielik-pl:4.5b}"
+OLLAMA_PROMPT_PRESET="${OLLAMA_PROMPT_PRESET:-bielik_pl}"
+OLLAMA_TIMEOUT_SECONDS="${OLLAMA_TIMEOUT_SECONDS:-600}"
+MAX_RECORDS="${MAX_RECORDS:-6}"
+
+cd "$PROJECT_DIR"
+
+export PYTHON_BIN
+export OLLAMA_MODEL
+export OLLAMA_PROMPT_PRESET
+export OLLAMA_TIMEOUT_SECONDS
+export MAX_RECORDS
+
+bash examples/run_generated_ollama_batch.sh

@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from esco_skill_batch import cli
+from esco_skill_batch.prompt_presets import BIELIK_PL_OLLAMA_PROMPT
 from tests.helpers import write_esco_csv
 
 
@@ -92,6 +93,76 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rows[0]["id"], "job-1")
             self.assertEqual(rows[0]["matches"][0]["esco_matches"][0]["preferred_label"], "Python")
             self.assertEqual(rows[1]["matches"][0]["esco_matches"][0]["preferred_label"], "SQL")
+
+    def test_make_extractor_uses_bielik_prompt_preset(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "extract-batch",
+                "--input",
+                "dummy.jsonl",
+                "--output",
+                "dummy-out.jsonl",
+                "--index-dir",
+                "dummy-index",
+                "--extractor",
+                "ollama",
+                "--ollama-model",
+                "bielik-pl:4.5b",
+                "--ollama-prompt-preset",
+                "bielik_pl",
+            ]
+        )
+
+        extractor = cli._make_extractor(args)
+
+        self.assertEqual(extractor.system_prompt, BIELIK_PL_OLLAMA_PROMPT)
+
+    def test_cli_evaluate_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            gold_path = base / "gold.jsonl"
+            prediction_path = base / "predictions.jsonl"
+            gold_path.write_text(
+                json.dumps(
+                    {
+                        "id": "rec-1",
+                        "gold_skills": [{"mention": "Python", "esco_uri": "uri:python"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            prediction_path.write_text(
+                json.dumps(
+                    {
+                        "id": "rec-1",
+                        "matches": [{"mention": {"text": "Python"}, "esco_matches": [{"concept_uri": "uri:python"}]}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = StringIO()
+            with patch("sys.stdout", stdout), patch(
+                "sys.argv",
+                [
+                    "esco-skill-batch",
+                    "evaluate",
+                    "--gold",
+                    str(gold_path),
+                    "--predictions",
+                    str(prediction_path),
+                    "--top-k",
+                    "1",
+                ],
+            ):
+                cli.main()
+
+            result = json.loads(stdout.getvalue().strip())
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["mapping_top1_accuracy"], 1.0)
 
 
 if __name__ == "__main__":

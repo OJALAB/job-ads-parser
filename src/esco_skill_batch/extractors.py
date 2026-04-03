@@ -6,20 +6,9 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict
 
+from esco_skill_batch.prompt_presets import DEFAULT_OLLAMA_PROMPT
 from esco_skill_batch.text_utils import unique_preserve_order
 from esco_skill_batch.types import SkillMention
-
-
-DEFAULT_OLLAMA_PROMPT = """Extract only explicit skill mentions from the job ad.
-
-Rules:
-- Return only skills and transversal skills.
-- Do not return occupations, company names, benefits, locations, salaries, teams or departments.
-- Keep mentions verbatim from the source text whenever possible.
-- Do not invent normalized names.
-- Deduplicate while preserving order.
-- If no skills are present, return an empty list.
-"""
 
 
 class PassthroughExtractor:
@@ -33,7 +22,14 @@ class PassthroughExtractor:
         if isinstance(raw, str):
             values = [part.strip() for part in raw.split("|") if part.strip()]
         elif isinstance(raw, list):
-            values = [str(item).strip() for item in raw if str(item).strip()]
+            values = []
+            for item in raw:
+                if isinstance(item, dict):
+                    candidate = str(item.get("mention", "")).strip()
+                else:
+                    candidate = str(item).strip()
+                if candidate:
+                    values.append(candidate)
         else:
             raise ValueError(f"Unsupported mentions field type: {type(raw).__name__}")
         return [SkillMention(text=value, label="skill") for value in unique_preserve_order(values)]

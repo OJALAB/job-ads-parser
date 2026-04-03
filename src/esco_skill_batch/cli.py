@@ -8,9 +8,11 @@ from dataclasses import asdict
 from pathlib import Path
 
 from esco_skill_batch.esco import load_esco_skills, save_index
+from esco_skill_batch.evaluation import evaluate_predictions
 from esco_skill_batch.extractors import GLiNERExtractor, OllamaExtractor, PassthroughExtractor, mentions_to_json
 from esco_skill_batch.io_utils import count_records, read_records
 from esco_skill_batch.matching import EmbeddingMatcher, HybridMatcher, LexicalMatcher, build_embeddings
+from esco_skill_batch.prompt_presets import OLLAMA_PROMPT_PRESETS, resolve_ollama_system_prompt
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,6 +57,18 @@ def build_parser() -> argparse.ArgumentParser:
     extract_batch.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     extract_batch.add_argument("--ollama-timeout-seconds", type=int, default=120)
     extract_batch.add_argument("--ollama-temperature", type=float, default=0.0)
+    extract_batch.add_argument(
+        "--ollama-prompt-preset",
+        choices=sorted(OLLAMA_PROMPT_PRESETS),
+        default="default_en",
+        help="Named system prompt preset for Ollama extraction.",
+    )
+    extract_batch.add_argument(
+        "--ollama-system-prompt-file",
+        type=Path,
+        default=None,
+        help="Optional path to a custom system prompt file for Ollama extraction.",
+    )
     extract_batch.add_argument("--gliner-model", default="urchade/gliner_multi-v2.1")
     extract_batch.add_argument("--gliner-threshold", type=float, default=0.35)
     extract_batch.add_argument("--top-k", type=int, default=5)
@@ -62,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
     extract_batch.add_argument("--max-records", type=int, default=None)
     extract_batch.add_argument("--keep-text", action="store_true")
     extract_batch.add_argument("--no-progress", action="store_true", help="Disable progress output on stderr.")
+
+    evaluate = subparsers.add_parser("evaluate", help="Evaluate predictions against a gold JSONL file.")
+    evaluate.add_argument("--gold", required=True, type=Path)
+    evaluate.add_argument("--predictions", required=True, type=Path)
+    evaluate.add_argument("--top-k", type=int, default=5)
 
     return parser
 
@@ -120,11 +139,18 @@ def _make_extractor(args: argparse.Namespace):
     if args.extractor == "passthrough":
         return PassthroughExtractor(mentions_field=args.mentions_field)
     if args.extractor == "ollama":
+        custom_prompt = None
+        if args.ollama_system_prompt_file is not None:
+            custom_prompt = args.ollama_system_prompt_file.read_text(encoding="utf-8")
         return OllamaExtractor(
             model=args.ollama_model,
             base_url=args.ollama_url,
             timeout_seconds=args.ollama_timeout_seconds,
             temperature=args.ollama_temperature,
+            system_prompt=resolve_ollama_system_prompt(
+                preset=args.ollama_prompt_preset,
+                custom_prompt=custom_prompt,
+            ),
         )
     return GLiNERExtractor(
         model_name=args.gliner_model,
@@ -239,5 +265,8 @@ def main() -> None:
         return
     if args.command == "extract-batch":
         run_extract_batch(args)
+        return
+    if args.command == "evaluate":
+        print(json.dumps(evaluate_predictions(args.gold, args.predictions, top_k=args.top_k), ensure_ascii=False))
         return
     parser.error(f"Unknown command: {args.command}")
