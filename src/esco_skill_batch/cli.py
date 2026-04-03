@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from esco_skill_batch.esco import load_esco_skills, save_index
-from esco_skill_batch.evaluation import evaluate_predictions
+from esco_skill_batch.evaluation import build_record_report, evaluate_predictions, render_record_report_markdown
 from esco_skill_batch.extractors import GLiNERExtractor, OllamaExtractor, PassthroughExtractor, mentions_to_json
 from esco_skill_batch.io_utils import count_records, read_records
 from esco_skill_batch.matching import EmbeddingMatcher, HybridMatcher, LexicalMatcher, build_embeddings
@@ -81,6 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--gold", required=True, type=Path)
     evaluate.add_argument("--predictions", required=True, type=Path)
     evaluate.add_argument("--top-k", type=int, default=5)
+
+    report = subparsers.add_parser("report", help="Generate a per-record evaluation report.")
+    report.add_argument("--gold", required=True, type=Path)
+    report.add_argument("--predictions", required=True, type=Path)
+    report.add_argument("--output", required=True, type=Path)
+    report.add_argument("--top-k", type=int, default=5)
+    report.add_argument("--format", choices=["markdown", "json"], default="markdown")
 
     return parser
 
@@ -268,5 +275,21 @@ def main() -> None:
         return
     if args.command == "evaluate":
         print(json.dumps(evaluate_predictions(args.gold, args.predictions, top_k=args.top_k), ensure_ascii=False))
+        return
+    if args.command == "report":
+        metrics = evaluate_predictions(args.gold, args.predictions, top_k=args.top_k)
+        report = build_record_report(args.gold, args.predictions, top_k=args.top_k)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        if args.format == "json":
+            args.output.write_text(
+                json.dumps({"metrics": metrics, "report": report}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        else:
+            args.output.write_text(
+                render_record_report_markdown(report, metrics),
+                encoding="utf-8",
+            )
+        print(json.dumps({"status": "ok", "output": str(args.output), "format": args.format}, ensure_ascii=False))
         return
     parser.error(f"Unknown command: {args.command}")

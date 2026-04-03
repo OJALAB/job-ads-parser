@@ -164,6 +164,55 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["mapping_top1_accuracy"], 1.0)
 
+    def test_cli_report_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            gold_path = base / "gold.jsonl"
+            prediction_path = base / "predictions.jsonl"
+            output_path = base / "report.md"
+            gold_path.write_text(
+                json.dumps(
+                    {
+                        "id": "rec-1",
+                        "title": "Tester",
+                        "gold_skills": [{"mention": "Python", "esco_uri": "uri:python"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            prediction_path.write_text(
+                json.dumps(
+                    {
+                        "id": "rec-1",
+                        "matches": [{"mention": {"text": "Python"}, "esco_matches": [{"concept_uri": "uri:python"}]}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = StringIO()
+            with patch("sys.stdout", stdout), patch(
+                "sys.argv",
+                [
+                    "esco-skill-batch",
+                    "report",
+                    "--gold",
+                    str(gold_path),
+                    "--predictions",
+                    str(prediction_path),
+                    "--output",
+                    str(output_path),
+                ],
+            ):
+                cli.main()
+
+            result = json.loads(stdout.getvalue().strip())
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue(output_path.exists())
+            self.assertIn("# Evaluation Report", output_path.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,8 @@ GOLD_FILE="${GOLD_FILE:-$PROJECT_DIR/examples/eval_gold_skills_pl.jsonl}"
 ESCO_CSV="${ESCO_CSV:-$PROJECT_DIR/examples/sample_esco_skills.csv}"
 INDEX_DIR="${INDEX_DIR:-$PROJECT_DIR/.demo/eval-ollama-index}"
 PREDICTIONS_FILE="${PREDICTIONS_FILE:-$PROJECT_DIR/.demo/eval-ollama-results.jsonl}"
+METRICS_FILE="${METRICS_FILE:-$PROJECT_DIR/.demo/eval-ollama-metrics.json}"
+REPORT_FILE="${REPORT_FILE:-$PROJECT_DIR/.demo/eval-ollama-report.md}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-bielik-pl-7b}"
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 OLLAMA_PROMPT_PRESET="${OLLAMA_PROMPT_PRESET:-bielik_pl}"
@@ -38,4 +40,12 @@ PYTHONPATH="${PYTHONPATH:-src}" "$PYTHON_BIN" -m esco_skill_batch extract-batch 
 PYTHONPATH="${PYTHONPATH:-src}" "$PYTHON_BIN" -m esco_skill_batch evaluate \
   --gold "$GOLD_FILE" \
   --predictions "$PREDICTIONS_FILE" \
-  --top-k "$TOP_K"
+  --top-k "$TOP_K" | tee "$METRICS_FILE"
+
+PYTHONPATH="${PYTHONPATH:-src}" "$PYTHON_BIN" -m esco_skill_batch report \
+  --gold "$GOLD_FILE" \
+  --predictions "$PREDICTIONS_FILE" \
+  --output "$REPORT_FILE" \
+  --top-k "$TOP_K" >/dev/null
+
+echo "Report written to: $REPORT_FILE"

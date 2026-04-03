@@ -64,6 +64,20 @@ def _prediction_items_by_record(prediction_rows: list[dict]) -> dict[str, list[d
     return output
 
 
+def _prediction_mentions_by_record(prediction_rows: list[dict]) -> dict[str, dict[str, dict]]:
+    output: dict[str, dict[str, dict]] = {}
+    for row in prediction_rows:
+        record_id = str(row["id"])
+        mentions: dict[str, dict] = {}
+        for item in row.get("matches", []):
+            mention_text = str(item.get("mention", {}).get("text", "")).strip()
+            if not mention_text:
+                continue
+            mentions[normalize_text(mention_text)] = item
+        output[record_id] = mentions
+    return output
+
+
 def evaluate_predictions(gold_path: Path, predictions_path: Path, top_k: int = 5) -> dict:
     gold_rows = _load_jsonl(gold_path)
     prediction_rows = _load_jsonl(predictions_path)
@@ -159,3 +173,124 @@ def evaluate_predictions(gold_path: Path, predictions_path: Path, top_k: int = 5
         "exact_top1_uri_match_rate": exact_top1_uri_match_records / total_records if total_records else 0.0,
         "top_k": top_k,
     }
+
+
+def build_record_report(gold_path: Path, predictions_path: Path, top_k: int = 5) -> dict:
+    gold_rows = _load_jsonl(gold_path)
+    prediction_rows = _load_jsonl(predictions_path)
+
+    gold_by_record = {str(row["id"]): row for row in gold_rows}
+    predictions_by_record = {str(row["id"]): row for row in prediction_rows}
+    prediction_mentions_by_record = _prediction_mentions_by_record(prediction_rows)
+
+    records: list[dict] = []
+    for record_id, gold_row in gold_by_record.items():
+        gold_items = gold_row.get("gold_skills", [])
+        gold_mentions_by_norm = {
+            normalize_text(str(item["mention"])): item for item in gold_items
+        }
+
+        prediction_row = predictions_by_record.get(record_id, {"matches": []})
+        predicted_mentions = prediction_mentions_by_record.get(record_id, {})
+
+        gold_norms = set(gold_mentions_by_norm)
+        predicted_norms = set(predicted_mentions)
+        missing_norms = sorted(gold_norms - predicted_norms)
+        extra_norms = sorted(predicted_norms - gold_norms)
+
+        mapping_errors: list[dict] = []
+        for normalized_mention, gold_item in gold_mentions_by_norm.items():
+            expected_uri = str(gold_item["esco_uri"])
+            predicted_item = predicted_mentions.get(normalized_mention)
+            predicted_candidates = []
+            if predicted_item is not None:
+                predicted_candidates = [
+                    {
+                        "concept_uri": str(match.get("concept_uri")),
+                        "preferred_label": str(match.get("preferred_label", "")),
+                        "score": match.get("score"),
+                    }
+                    for match in predicted_item.get("esco_matches", [])[:top_k]
+                ]
+            predicted_top1_uri = predicted_candidates[0]["concept_uri"] if predicted_candidates else None
+            if predicted_top1_uri != expected_uri:
+                mapping_errors.append(
+                    {
+                        "mention": str(gold_item["mention"]),
+                        "expected_uri": expected_uri,
+                        "predicted_top1_uri": predicted_top1_uri,
+                        "predicted_candidates": predicted_candidates,
+                    }
+                )
+
+        records.append(
+            {
+                "id": record_id,
+                "title": gold_row.get("title"),
+                "language": gold_row.get("language"),
+                "description": gold_row.get("description"),
+                "gold_mentions": [str(item["mention"]) for item in gold_items],
+                "predicted_mentions": [
+                    str(item.get("mention", {}).get("text", ""))
+                    for item in prediction_row.get("matches", [])
+                    if item.get("mention", {}).get("text")
+                ],
+                "missing_mentions": [str(gold_mentions_by_norm[item]["mention"]) for item in missing_norms],
+                "extra_mentions": [
+                    str(predicted_mentions[item].get("mention", {}).get("text", ""))
+                    for item in extra_norms
+                ],
+                "mapping_errors": mapping_errors,
+                "is_exact_mention_match": not missing_norms and not extra_norms,
+                "is_exact_top1_uri_match": not mapping_errors and not missing_norms and not extra_norms,
+            }
+        )
+
+    return {
+        "status": "ok",
+        "top_k": top_k,
+        "records": records,
+    }
+
+
+def render_record_report_markdown(report: dict, metrics: dict) -> str:
+    lines: list[str] = []
+    lines.append("# Evaluation Report")
+    lines.append("")
+    lines.append("## Summary")
+    lines.append("")
+    lines.append(f"- Gold records: {metrics['gold_records']}")
+    lines.append(f"- Mention F1: {metrics['mention_f1']:.3f}")
+    lines.append(f"- Mapping top-1 accuracy: {metrics['mapping_top1_accuracy']:.3f}")
+    lines.append(f"- Mapping top-k recall: {metrics['mapping_topk_recall']:.3f}")
+    lines.append(f"- Exact mention match rate: {metrics['exact_mention_match_rate']:.3f}")
+    lines.append(f"- Exact top-1 URI match rate: {metrics['exact_top1_uri_match_rate']:.3f}")
+    lines.append("")
+
+    for record in report["records"]:
+        lines.append(f"## {record['id']}")
+        if record.get("title"):
+            lines.append(f"- Title: {record['title']}")
+        if record.get("language"):
+            lines.append(f"- Language: {record['language']}")
+        if record.get("description"):
+            lines.append(f"- Description: {record['description']}")
+        lines.append(f"- Gold mentions: {', '.join(record['gold_mentions']) or '(none)'}")
+        lines.append(f"- Predicted mentions: {', '.join(record['predicted_mentions']) or '(none)'}")
+        lines.append(f"- Missing mentions: {', '.join(record['missing_mentions']) or '(none)'}")
+        lines.append(f"- Extra mentions: {', '.join(record['extra_mentions']) or '(none)'}")
+        if record["mapping_errors"]:
+            lines.append("- Mapping errors:")
+            for error in record["mapping_errors"]:
+                candidate_uris = ", ".join(
+                    candidate["concept_uri"] for candidate in error["predicted_candidates"]
+                ) or "(none)"
+                lines.append(
+                    f"  - {error['mention']}: expected {error['expected_uri']}, "
+                    f"predicted {error['predicted_top1_uri'] or '(none)'}, candidates {candidate_uris}"
+                )
+        else:
+            lines.append("- Mapping errors: (none)")
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
