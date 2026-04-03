@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import asdict
@@ -94,6 +95,10 @@ class OllamaExtractor:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 raw = json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, socket.timeout) as exc:
+            raise RuntimeError(
+                "Ollama request timed out. Increase --ollama-timeout-seconds or use a smaller model."
+            ) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Could not reach Ollama at {self.base_url}: {exc}") from exc
 

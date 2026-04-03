@@ -57,3 +57,30 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def count_records(path: Path) -> int:
+    suffix = path.suffix.lower()
+    if suffix == ".jsonl":
+        with path.open("r", encoding="utf-8") as handle:
+            return sum(1 for line in handle if line.strip())
+
+    if suffix == ".json":
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, list):
+            return len(payload)
+        if isinstance(payload, dict):
+            return 1
+        raise ValueError("JSON input must be either an object or a list of objects.")
+
+    if suffix == ".csv":
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            return sum(1 for _ in reader)
+
+    if suffix == ".txt":
+        with path.open("r", encoding="utf-8") as handle:
+            return sum(1 for line in handle if line.strip())
+
+    raise ValueError(f"Unsupported input extension: {path.suffix}")

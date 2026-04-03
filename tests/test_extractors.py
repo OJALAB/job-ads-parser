@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -73,6 +74,18 @@ class ExtractorTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")):
             with self.assertRaisesRegex(RuntimeError, "Could not reach Ollama"):
+                extractor.extract({}, "Need Python")
+
+    def test_ollama_extractor_wraps_timeouts(self) -> None:
+        extractor = OllamaExtractor(
+            model="qwen3:14b",
+            base_url="http://127.0.0.1:11434",
+            timeout_seconds=10,
+            temperature=0.0,
+        )
+
+        with patch("urllib.request.urlopen", side_effect=socket.timeout("timed out")):
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
                 extractor.extract({}, "Need Python")
 
 

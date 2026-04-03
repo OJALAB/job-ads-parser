@@ -15,6 +15,7 @@ MAPPING_BACKEND="${MAPPING_BACKEND:-lexical}"
 TOP_K="${TOP_K:-5}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.35}"
 MAX_RECORDS="${MAX_RECORDS:-3}"
+OLLAMA_TIMEOUT_SECONDS="${OLLAMA_TIMEOUT_SECONDS:-600}"
 
 cd "$PROJECT_DIR"
 
@@ -33,6 +34,7 @@ PYTHONPATH="${PYTHONPATH:-src}" "$PYTHON_BIN" -m esco_skill_batch extract-batch 
   --extractor ollama \
   --ollama-model "$OLLAMA_MODEL" \
   --ollama-url "$OLLAMA_URL" \
+  --ollama-timeout-seconds "$OLLAMA_TIMEOUT_SECONDS" \
   --mapping-backend "$MAPPING_BACKEND" \
   --top-k "$TOP_K" \
   --score-threshold "$SCORE_THRESHOLD" \

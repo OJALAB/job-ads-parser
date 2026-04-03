@@ -54,7 +54,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(build_result["indexed_skills"], 3)
 
             extract_stdout = StringIO()
-            with patch("sys.stdout", extract_stdout), patch(
+            extract_stderr = StringIO()
+            with patch("sys.stdout", extract_stdout), patch("sys.stderr", extract_stderr), patch(
                 "sys.argv",
                 [
                     "esco-skill-batch",
@@ -84,6 +85,8 @@ class CliTests(unittest.TestCase):
             extract_result = json.loads(extract_stdout.getvalue().strip())
             self.assertEqual(extract_result["status"], "ok")
             self.assertEqual(extract_result["processed_records"], 2)
+            self.assertIn("running: job-1", extract_stderr.getvalue())
+            self.assertIn("done: job-2", extract_stderr.getvalue())
 
             rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
             self.assertEqual(rows[0]["id"], "job-1")
