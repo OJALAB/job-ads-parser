@@ -231,13 +231,13 @@ def build_record_report(gold_path: Path, predictions_path: Path, top_k: int = 5)
                 "description": gold_row.get("description"),
                 "gold_mentions": [str(item["mention"]) for item in gold_items],
                 "predicted_mentions": [
-                    str(item.get("mention", {}).get("text", ""))
+                    _format_predicted_mention(item.get("mention", {}))
                     for item in prediction_row.get("matches", [])
                     if item.get("mention", {}).get("text")
                 ],
                 "missing_mentions": [str(gold_mentions_by_norm[item]["mention"]) for item in missing_norms],
                 "extra_mentions": [
-                    str(predicted_mentions[item].get("mention", {}).get("text", ""))
+                    _format_predicted_mention(predicted_mentions[item].get("mention", {}))
                     for item in extra_norms
                 ],
                 "mapping_errors": mapping_errors,
@@ -294,3 +294,11 @@ def render_record_report_markdown(report: dict, metrics: dict) -> str:
         lines.append("")
 
     return "\n".join(lines).strip() + "\n"
+
+
+def _format_predicted_mention(mention: dict) -> str:
+    text = str(mention.get("text", "") or "")
+    raw_text = str(mention.get("raw_text", "") or "")
+    if raw_text and raw_text != text:
+        return f"{raw_text} -> {text}"
+    return text

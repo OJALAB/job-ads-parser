@@ -7,6 +7,7 @@ import urllib.error
 from unittest.mock import patch
 
 from esco_skill_batch.extractors import OllamaExtractor, PassthroughExtractor
+from esco_skill_batch.normalization import normalize_extracted_skill_mention
 from esco_skill_batch.prompt_presets import BIELIK_PL_OLLAMA_PROMPT
 
 
@@ -111,6 +112,34 @@ class ExtractorTests(unittest.TestCase):
             BIELIK_PL_OLLAMA_PROMPT,
         )
 
+    def test_ollama_extractor_normalizes_polish_mentions(self) -> None:
+        extractor = OllamaExtractor(
+            model="qwen2.5:7b",
+            base_url="http://127.0.0.1:11434",
+            timeout_seconds=10,
+            temperature=0.0,
+            system_prompt=BIELIK_PL_OLLAMA_PROMPT,
+        )
+        payload = {
+            "message": {
+                "content": json.dumps(
+                    {
+                        "skills": [
+                            {"mention": "zna Python", "label": "skill"},
+                            {"mention": "programowanie w SQL", "label": "skill"},
+                            {"mention": "komunikacyjne", "label": "skill"},
+                        ]
+                    }
+                )
+            }
+        }
+
+        with patch("urllib.request.urlopen", return_value=FakeResponse(payload)):
+            mentions = extractor.extract({"language": "pl"}, "tekst")
+
+        self.assertEqual([item.text for item in mentions], ["Python", "SQL", "umiejetnosci komunikacyjne"])
+        self.assertEqual([item.raw_text for item in mentions], ["zna Python", "programowanie w SQL", "komunikacyjne"])
+
     def test_ollama_extractor_wraps_connection_errors(self) -> None:
         extractor = OllamaExtractor(
             model="qwen3:14b",
@@ -155,6 +184,11 @@ class ExtractorTests(unittest.TestCase):
         with patch("urllib.request.urlopen", side_effect=socket.timeout("timed out")):
             with self.assertRaisesRegex(RuntimeError, "timed out"):
                 extractor.extract({}, "Need Python")
+
+    def test_normalize_extracted_skill_mention(self) -> None:
+        self.assertEqual(normalize_extracted_skill_mention("zna Python", language="pl"), "Python")
+        self.assertEqual(normalize_extracted_skill_mention("programowanie w SQL", language="pl"), "SQL")
+        self.assertEqual(normalize_extracted_skill_mention("programming in Python", language="pl"), "programowanie w Pythonie")
 
 
 if __name__ == "__main__":

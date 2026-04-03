@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict
 
+from esco_skill_batch.normalization import normalize_extracted_skill_mention
 from esco_skill_batch.prompt_presets import DEFAULT_OLLAMA_PROMPT
 from esco_skill_batch.text_utils import unique_preserve_order
 from esco_skill_batch.types import SkillMention
@@ -126,15 +127,23 @@ class OllamaExtractor:
         skills = parsed.get("skills", [])
         mentions: list[SkillMention] = []
         seen: set[str] = set()
+        language = str(record.get("language", "") or "").strip().lower() or None
         for item in skills:
-            mention = str(item.get("mention", "")).strip()
-            if not mention:
+            raw_mention = str(item.get("mention", "")).strip()
+            if not raw_mention:
                 continue
+            mention = normalize_extracted_skill_mention(raw_mention, language=language)
             normalized = mention.casefold()
             if normalized in seen:
                 continue
             seen.add(normalized)
-            mentions.append(SkillMention(text=mention, label=str(item.get("label", "skill"))))
+            mentions.append(
+                SkillMention(
+                    text=mention,
+                    raw_text=raw_mention if raw_mention != mention else None,
+                    label=str(item.get("label", "skill")),
+                )
+            )
         return mentions
 
 

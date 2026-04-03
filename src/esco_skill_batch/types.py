@@ -23,6 +23,7 @@ class EscoSkill:
 @dataclass(slots=True)
 class SkillMention:
     text: str
+    raw_text: str | None = None
     label: str = "skill"
     score: float | None = None
     start: int | None = None
