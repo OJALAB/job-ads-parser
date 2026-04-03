@@ -95,6 +95,25 @@ class OllamaExtractor:
             raise RuntimeError(
                 "Ollama request timed out. Increase --ollama-timeout-seconds or use a smaller model."
             ) from exc
+        except urllib.error.HTTPError as exc:
+            error_detail = ""
+            try:
+                payload = json.loads(exc.read().decode("utf-8"))
+                error_detail = str(payload.get("error", "")).strip()
+            except Exception:
+                error_detail = ""
+
+            if exc.code == 404:
+                detail = f" Details: {error_detail}" if error_detail else ""
+                raise RuntimeError(
+                    f"Ollama returned 404 for model `{self.model}` at {self.base_url}. "
+                    f"Check `ollama list` and set the exact model name with OLLAMA_MODEL.{detail}"
+                ) from exc
+
+            detail = f" Details: {error_detail}" if error_detail else ""
+            raise RuntimeError(
+                f"Ollama request failed with HTTP {exc.code} for model `{self.model}` at {self.base_url}.{detail}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Could not reach Ollama at {self.base_url}: {exc}") from exc
 

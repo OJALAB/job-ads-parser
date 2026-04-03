@@ -2,10 +2,15 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$PWD}"
-OLLAMA_MODEL_NAME="${OLLAMA_MODEL_NAME:-bielik-pl:7b}"
+OLLAMA_MODEL_NAME="${OLLAMA_MODEL_NAME:-bielik-pl-7b}"
 BIELIK_GGUF="${BIELIK_GGUF:?Set BIELIK_GGUF to the local path of Bielik GGUF}"
 
 cd "$PROJECT_DIR"
+
+if [[ ! -f "$BIELIK_GGUF" ]]; then
+  echo "GGUF file not found: $BIELIK_GGUF" >&2
+  exit 1
+fi
 
 TMP_MODELFILE="$(mktemp)"
 trap 'rm -f "$TMP_MODELFILE"' EXIT

@@ -123,6 +123,27 @@ class ExtractorTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Could not reach Ollama"):
                 extractor.extract({}, "Need Python")
 
+    def test_ollama_extractor_reports_missing_model_on_404(self) -> None:
+        extractor = OllamaExtractor(
+            model="bielik-pl-7b",
+            base_url="http://127.0.0.1:11434",
+            timeout_seconds=10,
+            temperature=0.0,
+        )
+
+        error = urllib.error.HTTPError(
+            url="http://127.0.0.1:11434/api/chat",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=None,
+        )
+        error.read = lambda: json.dumps({"error": "model 'bielik-pl-7b' not found"}).encode("utf-8")
+
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "Check `ollama list`"):
+                extractor.extract({}, "Need Python")
+
     def test_ollama_extractor_wraps_timeouts(self) -> None:
         extractor = OllamaExtractor(
             model="qwen3:14b",
