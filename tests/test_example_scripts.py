@@ -23,6 +23,7 @@ class ExampleScriptTests(unittest.TestCase):
             project_root / "examples" / "run_eval_hf_suite.sh",
             project_root / "examples" / "run_eval_local_models_benchmark.sh",
             project_root / "examples" / "run_eval_finetuned_gliner.sh",
+            project_root / "examples" / "run_prepare_review_queue.sh",
         ]:
             content = path.read_text(encoding="utf-8")
             self.assertIn("DEVICE", content)

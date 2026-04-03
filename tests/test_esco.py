@@ -31,8 +31,11 @@ class EscoTests(unittest.TestCase):
                 include_language_skills=False,
             )
 
-            self.assertEqual([item.preferred_label for item in skills], ["Python", "SQL", "communication"])
-            self.assertEqual([item.category for item in skills], ["skill", "skill", "transversal"])
+            self.assertEqual(
+                [item.preferred_label for item in skills],
+                ["Python", "SQL", "communication", "problem solving"],
+            )
+            self.assertEqual([item.category for item in skills], ["skill", "skill", "transversal", "transversal"])
 
     def test_load_esco_skills_can_include_knowledge_and_language(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -48,7 +51,7 @@ class EscoTests(unittest.TestCase):
 
             self.assertEqual(
                 [item.category for item in skills],
-                ["skill", "skill", "transversal", "knowledge", "language"],
+                ["skill", "skill", "transversal", "transversal", "knowledge", "language"],
             )
 
     def test_save_and_load_index_roundtrip(self) -> None:
@@ -75,8 +78,8 @@ class EscoTests(unittest.TestCase):
 
             loaded_skills, manifest, token_index, exact_label_index = load_index(index_dir)
 
-            self.assertEqual(len(loaded_skills), 3)
-            self.assertEqual(manifest["size"], 3)
+            self.assertEqual(len(loaded_skills), 4)
+            self.assertEqual(manifest["size"], 4)
             self.assertIn("python", token_index)
             self.assertIn("communication skills", exact_label_index)
 

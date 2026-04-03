@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from esco_skill_batch.esco import load_index
+from esco_skill_batch.io_utils import read_records
 from esco_skill_batch.text_utils import normalize_text, tokenize
 from esco_skill_batch.types import EscoSkill, SkillMatch, SkillMention
 
@@ -72,6 +73,63 @@ class LexicalMatcher:
                 best_source = "description_substring"
 
         return best_score, best_source
+
+
+class ReviewAliasMatcher:
+    def __init__(self, base_matcher, index_dir: Path, aliases_path: Path) -> None:
+        self.base_matcher = base_matcher
+        self.skills, _, _, _ = load_index(index_dir)
+        self.skill_by_uri = {skill.concept_uri: skill for skill in self.skills}
+        self.aliases = self._load_aliases(aliases_path)
+
+    def _load_aliases(self, aliases_path: Path) -> dict[str, dict]:
+        aliases: dict[str, dict] = {}
+        for row in read_records(aliases_path):
+            concept_uri = str(row.get("concept_uri", "")).strip()
+            if not concept_uri or concept_uri not in self.skill_by_uri:
+                continue
+            for candidate in [
+                str(row.get("canonical_mention", "")).strip(),
+                str(row.get("mention_normalized", "")).strip(),
+            ]:
+                normalized = normalize_text(candidate)
+                if not normalized:
+                    continue
+                aliases[normalized] = {
+                    "concept_uri": concept_uri,
+                    "preferred_label": str(row.get("preferred_label", "")).strip() or self.skill_by_uri[concept_uri].preferred_label,
+                }
+        return aliases
+
+    def match(self, mention: SkillMention, top_k: int, score_threshold: float) -> list[SkillMatch]:
+        normalized_mention = normalize_text(mention.text)
+        base_matches = self.base_matcher.match(mention, top_k=top_k, score_threshold=score_threshold)
+
+        alias = self.aliases.get(normalized_mention)
+        if alias is None:
+            return base_matches
+
+        skill = self.skill_by_uri[alias["concept_uri"]]
+        alias_match = SkillMatch(
+            concept_uri=skill.concept_uri,
+            preferred_label=skill.preferred_label,
+            category=skill.category,
+            score=1.0,
+            matched_on="review_alias",
+            skill_type=skill.skill_type,
+            reuse_level=skill.reuse_level,
+        )
+
+        merged = [alias_match]
+        seen = {alias_match.concept_uri}
+        for match in base_matches:
+            if match.concept_uri in seen:
+                continue
+            merged.append(match)
+            seen.add(match.concept_uri)
+            if len(merged) >= top_k:
+                break
+        return merged[:top_k]
 
 
 class EmbeddingMatcher:

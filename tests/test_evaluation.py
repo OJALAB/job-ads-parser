@@ -69,6 +69,10 @@ class EvaluationTests(unittest.TestCase):
             self.assertAlmostEqual(metrics["mapping_top1_accuracy"], 1.0)
             self.assertAlmostEqual(metrics["mapping_topk_recall"], 1.0)
             self.assertEqual(metrics["mapping_mismatches"], [])
+            self.assertEqual(
+                metrics["mapping_mismatch_breakdown"],
+                {"missing_mention": 0, "no_candidates": 0, "wrong_top1": 0},
+            )
 
     def test_build_record_report_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -115,6 +119,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(report["records"][0]["missing_mentions"], ["SQL"])
             self.assertIn("## rec-1", markdown)
             self.assertIn("Missing mentions: SQL", markdown)
+            self.assertIn("Mapping mismatch breakdown", markdown)
 
 
 if __name__ == "__main__":

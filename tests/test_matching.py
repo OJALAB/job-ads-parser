@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from esco_skill_batch.esco import load_esco_skills, save_index
-from esco_skill_batch.matching import LexicalMatcher
+from esco_skill_batch.matching import LexicalMatcher, ReviewAliasMatcher
 from esco_skill_batch.types import SkillMention
 from tests.helpers import write_esco_csv
 
@@ -57,6 +58,32 @@ class MatchingTests(unittest.TestCase):
             matches = matcher.match(SkillMention(text="nonexistent capability"), top_k=3, score_threshold=0.5)
 
             self.assertEqual(matches, [])
+
+    def test_review_alias_matcher_prioritizes_reviewed_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            index_dir = build_index(tmp_dir)
+            aliases_path = Path(tmp_dir) / "review_aliases.jsonl"
+            aliases_path.write_text(
+                json.dumps(
+                    {
+                        "canonical_mention": "zapytania sql",
+                        "mention_normalized": "zapytania sql",
+                        "concept_uri": "http://data.europa.eu/esco/skill/sql",
+                        "preferred_label": "SQL",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            matcher = ReviewAliasMatcher(LexicalMatcher(index_dir), index_dir=index_dir, aliases_path=aliases_path)
+            matches = matcher.match(SkillMention(text="zapytania SQL"), top_k=3, score_threshold=0.0)
+
+            self.assertTrue(matches)
+            self.assertEqual(matches[0].concept_uri, "http://data.europa.eu/esco/skill/sql")
+            self.assertEqual(matches[0].matched_on, "review_alias")
+            self.assertEqual(matches[0].score, 1.0)
 
 
 if __name__ == "__main__":

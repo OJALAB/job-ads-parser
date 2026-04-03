@@ -92,6 +92,11 @@ def evaluate_predictions(gold_path: Path, predictions_path: Path, top_k: int = 5
     exact_mention_match_records = 0
     exact_top1_uri_match_records = 0
     mapping_mismatches: list[dict] = []
+    mismatch_breakdown = {
+        "missing_mention": 0,
+        "no_candidates": 0,
+        "wrong_top1": 0,
+    }
 
     missing_predictions = sorted(set(gold_by_record) - set(predictions_by_record))
 
@@ -134,6 +139,13 @@ def evaluate_predictions(gold_path: Path, predictions_path: Path, top_k: int = 5
             if candidate_uris and candidate_uris[0] == gold_uri:
                 mapping_top1_correct += 1
             else:
+                if normalized_mention not in predictions_by_mention:
+                    mismatch_type = "missing_mention"
+                elif not candidate_uris:
+                    mismatch_type = "no_candidates"
+                else:
+                    mismatch_type = "wrong_top1"
+                mismatch_breakdown[mismatch_type] += 1
                 mapping_mismatches.append(
                     {
                         "id": record_id,
@@ -141,6 +153,7 @@ def evaluate_predictions(gold_path: Path, predictions_path: Path, top_k: int = 5
                         "expected_uri": gold_uri,
                         "predicted_top1_uri": candidate_uris[0] if candidate_uris else None,
                         "predicted_candidate_uris": candidate_uris,
+                        "mismatch_type": mismatch_type,
                     }
                 )
             if gold_uri in candidate_uris:
@@ -169,6 +182,7 @@ def evaluate_predictions(gold_path: Path, predictions_path: Path, top_k: int = 5
         "mapping_topk_recall": mapping_topk_correct / mapping_total if mapping_total else 0.0,
         "mapping_total": mapping_total,
         "mapping_mismatches": mapping_mismatches,
+        "mapping_mismatch_breakdown": mismatch_breakdown,
         "exact_mention_match_rate": exact_mention_match_records / total_records if total_records else 0.0,
         "exact_top1_uri_match_rate": exact_top1_uri_match_records / total_records if total_records else 0.0,
         "top_k": top_k,
@@ -214,12 +228,19 @@ def build_record_report(gold_path: Path, predictions_path: Path, top_k: int = 5)
                 ]
             predicted_top1_uri = predicted_candidates[0]["concept_uri"] if predicted_candidates else None
             if predicted_top1_uri != expected_uri:
+                if predicted_item is None:
+                    mismatch_type = "missing_mention"
+                elif not predicted_candidates:
+                    mismatch_type = "no_candidates"
+                else:
+                    mismatch_type = "wrong_top1"
                 mapping_errors.append(
                     {
                         "mention": str(gold_item["mention"]),
                         "expected_uri": expected_uri,
                         "predicted_top1_uri": predicted_top1_uri,
                         "predicted_candidates": predicted_candidates,
+                        "mismatch_type": mismatch_type,
                     }
                 )
 
@@ -265,6 +286,13 @@ def render_record_report_markdown(report: dict, metrics: dict) -> str:
     lines.append(f"- Mapping top-k recall: {metrics['mapping_topk_recall']:.3f}")
     lines.append(f"- Exact mention match rate: {metrics['exact_mention_match_rate']:.3f}")
     lines.append(f"- Exact top-1 URI match rate: {metrics['exact_top1_uri_match_rate']:.3f}")
+    mismatch_breakdown = metrics.get("mapping_mismatch_breakdown", {})
+    lines.append(
+        "- Mapping mismatch breakdown: "
+        f"missing_mention={mismatch_breakdown.get('missing_mention', 0)}, "
+        f"no_candidates={mismatch_breakdown.get('no_candidates', 0)}, "
+        f"wrong_top1={mismatch_breakdown.get('wrong_top1', 0)}"
+    )
     lines.append("")
 
     for record in report["records"]:
@@ -287,7 +315,8 @@ def render_record_report_markdown(report: dict, metrics: dict) -> str:
                 ) or "(none)"
                 lines.append(
                     f"  - {error['mention']}: expected {error['expected_uri']}, "
-                    f"predicted {error['predicted_top1_uri'] or '(none)'}, candidates {candidate_uris}"
+                    f"predicted {error['predicted_top1_uri'] or '(none)'}, candidates {candidate_uris}, "
+                    f"reason {error['mismatch_type']}"
                 )
         else:
             lines.append("- Mapping errors: (none)")

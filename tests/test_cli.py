@@ -53,7 +53,7 @@ class CliTests(unittest.TestCase):
 
             build_result = json.loads(build_stdout.getvalue().strip())
             self.assertEqual(build_result["status"], "ok")
-            self.assertEqual(build_result["indexed_skills"], 3)
+            self.assertEqual(build_result["indexed_skills"], 4)
 
             extract_stdout = StringIO()
             extract_stderr = StringIO()
@@ -215,6 +215,31 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(extractor_cls.call_args.kwargs["device"], "cuda:0")
 
+    def test_make_matcher_wraps_review_aliases(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "extract-batch",
+                "--input",
+                "dummy.jsonl",
+                "--output",
+                "dummy-out.jsonl",
+                "--index-dir",
+                "dummy-index",
+                "--review-aliases",
+                "aliases.jsonl",
+            ]
+        )
+
+        with patch("esco_skill_batch.cli.LexicalMatcher", return_value="base"), patch(
+            "esco_skill_batch.cli.ReviewAliasMatcher",
+            return_value="wrapped",
+        ) as alias_cls:
+            matcher = cli._make_matcher(args)
+
+        self.assertEqual(matcher, "wrapped")
+        alias_cls.assert_called_once()
+
     def test_cli_evaluate_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
@@ -363,6 +388,57 @@ class CliTests(unittest.TestCase):
             cli.run_train_gliner(args)
 
         self.assertEqual(train_helper.call_args.kwargs["device"], "cpu")
+
+    def test_cli_prepare_review_queue_command(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "prepare-review-queue",
+                "--input",
+                "jobs.jsonl",
+                "--output",
+                "queue.jsonl",
+                "--index-dir",
+                "index",
+            ]
+        )
+
+        with patch("esco_skill_batch.cli._make_extractor", return_value=object()), patch(
+            "esco_skill_batch.cli._make_matcher",
+            return_value=object(),
+        ), patch(
+            "esco_skill_batch.cli.prepare_review_queue",
+            return_value={"status": "ok", "queue_size": 3},
+        ) as helper, patch("sys.stdout", StringIO()):
+            cli.run_prepare_review_queue(args)
+
+        helper.assert_called_once()
+        self.assertEqual(helper.call_args.kwargs["text_field"], "skills_text")
+
+    def test_cli_build_finetune_corpus_command(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "build-finetune-corpus",
+                "--input",
+                "jobs.jsonl",
+                "--reviewed-queue",
+                "reviewed.jsonl",
+                "--output-dir",
+                "corpus",
+                "--text-field",
+                "description",
+            ]
+        )
+
+        with patch(
+            "esco_skill_batch.cli.build_finetune_corpus",
+            return_value={"status": "ok", "silver_train_records": 2},
+        ) as helper, patch("sys.stdout", StringIO()):
+            cli.run_build_finetune_corpus(args)
+
+        helper.assert_called_once()
+        self.assertEqual(helper.call_args.kwargs["text_field"], "description")
 
     def test_cli_report_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

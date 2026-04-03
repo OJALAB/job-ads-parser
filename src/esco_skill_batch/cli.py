@@ -18,8 +18,14 @@ from esco_skill_batch.extractors import (
 )
 from esco_skill_batch.gliner_training import prepare_gliner_datasets, train_gliner_model
 from esco_skill_batch.io_utils import count_records, read_records
-from esco_skill_batch.matching import EmbeddingMatcher, HybridMatcher, LexicalMatcher, build_embeddings
+from esco_skill_batch.matching import EmbeddingMatcher, HybridMatcher, LexicalMatcher, ReviewAliasMatcher, build_embeddings
 from esco_skill_batch.prompt_presets import OLLAMA_PROMPT_PRESETS, resolve_ollama_system_prompt
+from esco_skill_batch.review_workflow import (
+    build_finetune_corpus,
+    export_review_csv,
+    import_review_csv,
+    prepare_review_queue,
+)
 from esco_skill_batch.runtime import resolve_device_argument
 
 
@@ -65,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["lexical", "embedding", "hybrid"],
         default="lexical",
     )
+    extract_batch.add_argument(
+        "--review-aliases",
+        type=Path,
+        default=None,
+        help="Optional JSONL/JSON/CSV file with review-validated canonical_mention -> concept_uri aliases.",
+    )
     extract_batch.add_argument("--mentions-field", default="skills_raw")
     extract_batch.add_argument("--ollama-model", default="qwen3:14b")
     extract_batch.add_argument("--ollama-url", default="http://127.0.0.1:11434")
@@ -106,6 +118,96 @@ def build_parser() -> argparse.ArgumentParser:
     extract_batch.add_argument("--max-records", type=int, default=None)
     extract_batch.add_argument("--keep-text", action="store_true")
     extract_batch.add_argument("--no-progress", action="store_true", help="Disable progress output on stderr.")
+
+    prepare_review = subparsers.add_parser(
+        "prepare-review-queue",
+        help="Extract and group candidate skills from real job ads into a human review queue.",
+    )
+    prepare_review.add_argument("--input", required=True, nargs="+", type=Path)
+    prepare_review.add_argument("--output", required=True, type=Path)
+    prepare_review.add_argument("--index-dir", required=True, type=Path)
+    prepare_review.add_argument("--text-field", default="skills_text")
+    prepare_review.add_argument("--id-field", default="id")
+    prepare_review.add_argument(
+        "--extractor",
+        choices=["ollama", "gliner", "hf_token_classifier", "passthrough"],
+        default="gliner",
+    )
+    prepare_review.add_argument(
+        "--device",
+        default="auto",
+        help="Execution device for HF-backed extractors: auto, cpu, cuda, cuda:0, cuda:1.",
+    )
+    prepare_review.add_argument(
+        "--mapping-backend",
+        choices=["lexical", "embedding", "hybrid"],
+        default="lexical",
+    )
+    prepare_review.add_argument(
+        "--review-aliases",
+        type=Path,
+        default=None,
+        help="Optional existing review alias file to use during candidate mapping.",
+    )
+    prepare_review.add_argument("--mentions-field", default="skills_raw")
+    prepare_review.add_argument("--gliner-model", default="urchade/gliner_large-v2.1")
+    prepare_review.add_argument("--gliner-threshold", type=float, default=0.35)
+    prepare_review.add_argument("--hf-model", default="jjzha/escoxlmr_skill_extraction")
+    prepare_review.add_argument(
+        "--hf-aggregation-strategy",
+        choices=["none", "simple", "first", "average", "max"],
+        default="simple",
+    )
+    prepare_review.add_argument(
+        "--hf-entity-labels",
+        default="",
+        help="Comma-separated HF token classification labels to keep. Empty means keep all non-O entities.",
+    )
+    prepare_review.add_argument(
+        "--hf-device",
+        type=int,
+        default=None,
+        help="Deprecated alias for --device. Use -1 for CPU or >=0 for a CUDA index.",
+    )
+    prepare_review.add_argument("--ollama-model", default="qwen2.5:7b")
+    prepare_review.add_argument("--ollama-url", default="http://127.0.0.1:11434")
+    prepare_review.add_argument("--ollama-timeout-seconds", type=int, default=120)
+    prepare_review.add_argument("--ollama-temperature", type=float, default=0.0)
+    prepare_review.add_argument(
+        "--ollama-prompt-preset",
+        choices=sorted(OLLAMA_PROMPT_PRESETS),
+        default="default_en",
+    )
+    prepare_review.add_argument("--ollama-system-prompt-file", type=Path, default=None)
+    prepare_review.add_argument("--top-k", type=int, default=5)
+    prepare_review.add_argument("--score-threshold", type=float, default=0.35)
+    prepare_review.add_argument("--max-records", type=int, default=None)
+
+    export_review = subparsers.add_parser(
+        "export-review-csv",
+        help="Export a review queue JSONL into a flattened CSV for human editing.",
+    )
+    export_review.add_argument("--input", required=True, type=Path)
+    export_review.add_argument("--output", required=True, type=Path)
+
+    import_review = subparsers.add_parser(
+        "import-review-csv",
+        help="Merge a human-edited review CSV back into the full review queue JSONL.",
+    )
+    import_review.add_argument("--queue", required=True, type=Path)
+    import_review.add_argument("--input", required=True, type=Path)
+    import_review.add_argument("--output", required=True, type=Path)
+
+    build_corpus = subparsers.add_parser(
+        "build-finetune-corpus",
+        help="Build silver train and manual holdout corpora from reviewed skill candidates.",
+    )
+    build_corpus.add_argument("--input", required=True, nargs="+", type=Path)
+    build_corpus.add_argument("--reviewed-queue", required=True, type=Path)
+    build_corpus.add_argument("--output-dir", required=True, type=Path)
+    build_corpus.add_argument("--text-field", default="skills_text")
+    build_corpus.add_argument("--holdout-ratio", type=float, default=0.2)
+    build_corpus.add_argument("--seed", type=int, default=42)
 
     evaluate = subparsers.add_parser("evaluate", help="Evaluate predictions against a gold JSONL file.")
     evaluate.add_argument("--gold", required=True, type=Path)
@@ -283,10 +385,15 @@ def _make_extractor(args: argparse.Namespace):
 
 def _make_matcher(args: argparse.Namespace):
     if args.mapping_backend == "lexical":
-        return LexicalMatcher(args.index_dir)
-    if args.mapping_backend == "embedding":
-        return EmbeddingMatcher(args.index_dir)
-    return HybridMatcher(args.index_dir)
+        matcher = LexicalMatcher(args.index_dir)
+    elif args.mapping_backend == "embedding":
+        matcher = EmbeddingMatcher(args.index_dir)
+    else:
+        matcher = HybridMatcher(args.index_dir)
+
+    if getattr(args, "review_aliases", None):
+        matcher = ReviewAliasMatcher(matcher, index_dir=args.index_dir, aliases_path=args.review_aliases)
+    return matcher
 
 
 def run_build_index(args: argparse.Namespace) -> None:
@@ -380,6 +487,43 @@ def run_extract_batch(args: argparse.Namespace) -> None:
     )
 
 
+def run_prepare_review_queue(args: argparse.Namespace) -> None:
+    extractor = _make_extractor(args)
+    matcher = _make_matcher(args)
+    summary = prepare_review_queue(
+        input_paths=args.input,
+        output_path=args.output,
+        extractor=extractor,
+        matcher=matcher,
+        text_field=args.text_field,
+        id_field=args.id_field,
+        top_k=args.top_k,
+        score_threshold=args.score_threshold,
+        max_records=args.max_records,
+    )
+    print(json.dumps(summary, ensure_ascii=False))
+
+
+def run_export_review_csv(args: argparse.Namespace) -> None:
+    print(json.dumps(export_review_csv(args.input, args.output), ensure_ascii=False))
+
+
+def run_import_review_csv(args: argparse.Namespace) -> None:
+    print(json.dumps(import_review_csv(args.queue, args.input, args.output), ensure_ascii=False))
+
+
+def run_build_finetune_corpus(args: argparse.Namespace) -> None:
+    summary = build_finetune_corpus(
+        input_paths=args.input,
+        reviewed_queue_path=args.reviewed_queue,
+        output_dir=args.output_dir,
+        text_field=args.text_field,
+        holdout_ratio=args.holdout_ratio,
+        seed=args.seed,
+    )
+    print(json.dumps(summary, ensure_ascii=False))
+
+
 def run_prepare_gliner_data(args: argparse.Namespace) -> None:
     manifest = prepare_gliner_datasets(
         input_paths=args.input,
@@ -447,6 +591,18 @@ def main() -> None:
         return
     if args.command == "extract-batch":
         run_extract_batch(args)
+        return
+    if args.command == "prepare-review-queue":
+        run_prepare_review_queue(args)
+        return
+    if args.command == "export-review-csv":
+        run_export_review_csv(args)
+        return
+    if args.command == "import-review-csv":
+        run_import_review_csv(args)
+        return
+    if args.command == "build-finetune-corpus":
+        run_build_finetune_corpus(args)
         return
     if args.command == "evaluate":
         print(json.dumps(evaluate_predictions(args.gold, args.predictions, top_k=args.top_k), ensure_ascii=False))
