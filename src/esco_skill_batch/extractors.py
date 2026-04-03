@@ -191,54 +191,77 @@ class HFTokenClassificationExtractor:
         device: int = -1,
     ) -> None:
         try:
-            from transformers import pipeline
+            import torch
+            from transformers import AutoModelForTokenClassification, AutoTokenizer
         except ImportError as exc:
             raise RuntimeError(
                 "HF token classification extractor requires `transformers` and `torch`. Install with `.[hf]`."
             ) from exc
 
+        self.torch = torch
         self.model_name = model_name
         self.aggregation_strategy = aggregation_strategy
         self.entity_labels = {label.casefold() for label in (entity_labels or [])}
-        self.pipeline = pipeline(
-            "token-classification",
-            model=model_name,
-            tokenizer=model_name,
-            aggregation_strategy=aggregation_strategy,
-            device=device,
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+        self.model = AutoModelForTokenClassification.from_pretrained(model_name)
+        self.id2label = {
+            int(key): str(value)
+            for key, value in getattr(self.model.config, "id2label", {}).items()
+        }
+        max_length = int(getattr(self.model.config, "max_position_embeddings", 512))
+        self.max_length = max_length if max_length > 0 else 512
+
+        if device >= 0 and torch.cuda.is_available():
+            self.device = torch.device(f"cuda:{device}")
+        else:
+            self.device = torch.device("cpu")
+        self.model.to(self.device)
+        self.model.eval()
+
+        if not getattr(self.tokenizer, "is_fast", False):
+            raise RuntimeError(
+                f"HF token classification extractor requires a fast tokenizer with offsets. Model `{model_name}` does not provide one."
+            )
 
     def extract(self, record: dict, text: str) -> list[SkillMention]:
-        raw_entities = self.pipeline(text)
-        mentions: list[SkillMention] = []
-        seen: set[str] = set()
+        encoded = self.tokenizer(
+            text,
+            return_offsets_mapping=True,
+            truncation=True,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        offset_mapping = encoded.pop("offset_mapping")[0].tolist()
+        attention_mask = encoded["attention_mask"][0].tolist()
+        encoded = {key: value.to(self.device) for key, value in encoded.items()}
+
+        with self.torch.no_grad():
+            outputs = self.model(**encoded)
+            logits = outputs.logits[0]
+            probabilities = self.torch.softmax(logits, dim=-1)
+            predicted_ids = self.torch.argmax(logits, dim=-1).tolist()
+            token_scores = probabilities.max(dim=-1).values.tolist()
+
         language = str(record.get("language", "") or "").strip().lower() or None
-
-        for entity in raw_entities:
-            label = _normalize_hf_entity_label(entity.get("entity_group") or entity.get("entity"))
-            if self.entity_labels and label not in self.entity_labels:
+        token_offsets: list[tuple[int, int]] = []
+        token_labels: list[str] = []
+        filtered_scores: list[float] = []
+        for mask, offset, predicted_id, score in zip(attention_mask, offset_mapping, predicted_ids, token_scores):
+            if not mask:
                 continue
+            start, end = int(offset[0]), int(offset[1])
+            token_offsets.append((start, end))
+            token_labels.append(self.id2label.get(int(predicted_id), "O"))
+            filtered_scores.append(float(score))
 
-            raw_mention = _clean_hf_mention_text(entity.get("word") or entity.get("text") or "")
-            if not raw_mention:
-                continue
-
-            mention = normalize_extracted_skill_mention(raw_mention, language=language)
-            normalized = mention.casefold()
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            mentions.append(
-                SkillMention(
-                    text=mention,
-                    raw_text=raw_mention if raw_mention != mention else None,
-                    label=label or "skill",
-                    score=float(entity["score"]) if "score" in entity else None,
-                    start=int(entity["start"]) if "start" in entity else None,
-                    end=int(entity["end"]) if "end" in entity else None,
-                )
-            )
-        return mentions
+        return _decode_hf_token_predictions(
+            text=text,
+            token_offsets=token_offsets,
+            token_labels=token_labels,
+            token_scores=filtered_scores,
+            language=language,
+            entity_labels=self.entity_labels,
+        )
 
 
 def _normalize_hf_entity_label(value: object) -> str:
@@ -258,6 +281,110 @@ def _clean_hf_mention_text(value: object) -> str:
     text = text.replace("##", "")
     text = text.replace("▁", " ")
     return " ".join(text.split())
+
+
+def _split_hf_bio_label(value: object) -> tuple[str, str]:
+    label = _normalize_hf_entity_label(value)
+    if label in {"b", "i", "o"}:
+        return label, "skill"
+    if label.startswith("b-"):
+        return "b", label[2:]
+    if label.startswith("i-"):
+        return "i", label[2:]
+    if label == "o":
+        return "o", ""
+    return "b", label
+
+
+def _decode_hf_token_predictions(
+    text: str,
+    token_offsets: list[tuple[int, int]],
+    token_labels: list[str],
+    token_scores: list[float],
+    language: str | None,
+    entity_labels: set[str] | None = None,
+) -> list[SkillMention]:
+    mentions: list[SkillMention] = []
+    seen: set[str] = set()
+    allowed = entity_labels or set()
+
+    current_start: int | None = None
+    current_end: int | None = None
+    current_type = "skill"
+    current_scores: list[float] = []
+
+    def flush() -> None:
+        nonlocal current_start, current_end, current_type, current_scores
+        if current_start is None or current_end is None or current_end <= current_start:
+            current_start = None
+            current_end = None
+            current_type = "skill"
+            current_scores = []
+            return
+
+        raw_text = text[current_start:current_end].strip()
+        if not raw_text:
+            current_start = None
+            current_end = None
+            current_type = "skill"
+            current_scores = []
+            return
+
+        mention = normalize_extracted_skill_mention(raw_text, language=language)
+        normalized = mention.casefold()
+        if normalized not in seen:
+            seen.add(normalized)
+            mentions.append(
+                SkillMention(
+                    text=mention,
+                    raw_text=raw_text if raw_text != mention else None,
+                    label=current_type or "skill",
+                    score=(sum(current_scores) / len(current_scores)) if current_scores else None,
+                    start=current_start,
+                    end=current_end,
+                )
+            )
+
+        current_start = None
+        current_end = None
+        current_type = "skill"
+        current_scores = []
+
+    for (start, end), raw_label, score in zip(token_offsets, token_labels, token_scores):
+        if start == end:
+            flush()
+            continue
+
+        prefix, entity_type = _split_hf_bio_label(raw_label)
+        if prefix == "o":
+            flush()
+            continue
+
+        entity_type = entity_type or "skill"
+        if allowed and entity_type.casefold() not in allowed:
+            flush()
+            continue
+
+        should_start_new = (
+            current_start is None
+            or prefix == "b"
+            or entity_type != current_type
+            or start > (current_end or start) + 1
+        )
+
+        if should_start_new:
+            flush()
+            current_start = start
+            current_end = end
+            current_type = entity_type
+            current_scores = [score]
+            continue
+
+        current_end = max(current_end or end, end)
+        current_scores.append(score)
+
+    flush()
+    return mentions
 
 
 def mentions_to_json(mentions: list[SkillMention]) -> list[dict]:

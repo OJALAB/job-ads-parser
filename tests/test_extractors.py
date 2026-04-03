@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import json
 import socket
-import sys
-import types
 import unittest
 import urllib.error
 from unittest.mock import patch
 
-from esco_skill_batch.extractors import HFTokenClassificationExtractor, OllamaExtractor, PassthroughExtractor
+from esco_skill_batch.extractors import OllamaExtractor, PassthroughExtractor, _decode_hf_token_predictions
 from esco_skill_batch.normalization import normalize_extracted_skill_mention
 from esco_skill_batch.prompt_presets import BIELIK_PL_OLLAMA_PROMPT
 
@@ -192,43 +190,16 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(normalize_extracted_skill_mention("programowanie w SQL", language="pl"), "SQL")
         self.assertEqual(normalize_extracted_skill_mention("programming in Python", language="pl"), "programowanie w Pythonie")
 
-    def test_hf_token_classification_extractor_parses_entities(self) -> None:
-        class FakePipeline:
-            def __call__(self, text):
-                return [
-                    {
-                        "entity_group": "SKILL",
-                        "word": "Python",
-                        "score": 0.99,
-                        "start": 5,
-                        "end": 11,
-                    },
-                    {
-                        "entity_group": "SKILL",
-                        "word": "SQL",
-                        "score": 0.95,
-                        "start": 16,
-                        "end": 19,
-                    },
-                    {
-                        "entity_group": "SKILL",
-                        "word": "SQL",
-                        "score": 0.90,
-                        "start": 16,
-                        "end": 19,
-                    },
-                ]
-
-        fake_transformers = types.SimpleNamespace(
-            pipeline=lambda *args, **kwargs: FakePipeline(),
+    def test_decode_hf_token_predictions_handles_bio_labels(self) -> None:
+        text = "Python i SQL"
+        mentions = _decode_hf_token_predictions(
+            text=text,
+            token_offsets=[(0, 6), (7, 8), (9, 12)],
+            token_labels=["B", "O", "B"],
+            token_scores=[0.99, 0.10, 0.95],
+            language="pl",
+            entity_labels=set(),
         )
-
-        with patch.dict(sys.modules, {"transformers": fake_transformers}):
-            extractor = HFTokenClassificationExtractor(
-                model_name="jjzha/escoxlmr_skill_extraction",
-                aggregation_strategy="simple",
-            )
-            mentions = extractor.extract({"language": "pl"}, "tekst Python i SQL")
 
         self.assertEqual([item.text for item in mentions], ["Python", "SQL"])
         self.assertEqual([item.label for item in mentions], ["skill", "skill"])
