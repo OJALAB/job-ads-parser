@@ -20,7 +20,7 @@ Narzędzie działa w dwóch krokach:
 ## Obsługiwane tryby ekstrakcji
 
 - `ollama`
-  Najprostszy start na Twoim serwerze. Wykorzystuje lokalne `http://127.0.0.1:11434`.
+  Integracja z lokalnym endpointem Ollama i ekstrakcją przez model instrukcyjny.
 - `gliner`
   Docelowy extractor HF dla większej kontroli nad typem encji.
 - `passthrough`
@@ -195,6 +195,45 @@ bash examples/run_server_ollama_example.sh
 ```
 
 Jeśli chcesz użyć środowiska `llm`, ustaw po prostu właściwy interpreter w `PYTHON_BIN`.
+Skrypty przykładowe uruchamiają kod bezpośrednio z repo przez `PYTHONPATH=src`, więc nie wymagają wcześniejszego `pip install -e .`.
+
+## Lokalne dane syntetyczne
+
+Jeśli nie masz jeszcze własnych ofert, możesz wygenerować lokalny zbiór testowy:
+
+```bash
+cd /path/to/job-offers-parser
+python3 examples/generate_synthetic_jobs.py
+```
+
+To utworzy:
+
+```bash
+examples/generated_jobs_multilingual.jsonl
+```
+
+Gotowy batch na tych danych:
+
+```bash
+cd /path/to/job-offers-parser
+bash examples/run_generated_batch.sh
+```
+
+Test z ekstrakcją przez Ollama na danych syntetycznych:
+
+```bash
+cd /path/to/job-offers-parser
+ollama pull qwen3:14b
+export OLLAMA_MODEL=qwen3:14b
+bash examples/run_generated_ollama_batch.sh
+```
+
+Jeśli chcesz przetestować cały zestaw zamiast pierwszych 3 rekordów:
+
+```bash
+export MAX_RECORDS=12
+bash examples/run_generated_ollama_batch.sh
+```
 
 ## Testy
 
