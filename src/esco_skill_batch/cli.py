@@ -9,7 +9,13 @@ from pathlib import Path
 
 from esco_skill_batch.esco import load_esco_skills, save_index
 from esco_skill_batch.evaluation import build_record_report, evaluate_predictions, render_record_report_markdown
-from esco_skill_batch.extractors import GLiNERExtractor, OllamaExtractor, PassthroughExtractor, mentions_to_json
+from esco_skill_batch.extractors import (
+    GLiNERExtractor,
+    HFTokenClassificationExtractor,
+    OllamaExtractor,
+    PassthroughExtractor,
+    mentions_to_json,
+)
 from esco_skill_batch.io_utils import count_records, read_records
 from esco_skill_batch.matching import EmbeddingMatcher, HybridMatcher, LexicalMatcher, build_embeddings
 from esco_skill_batch.prompt_presets import OLLAMA_PROMPT_PRESETS, resolve_ollama_system_prompt
@@ -44,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     extract_batch.add_argument("--id-field", default="id")
     extract_batch.add_argument(
         "--extractor",
-        choices=["ollama", "gliner", "passthrough"],
+        choices=["ollama", "gliner", "hf_token_classifier", "passthrough"],
         default="ollama",
     )
     extract_batch.add_argument(
@@ -71,6 +77,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     extract_batch.add_argument("--gliner-model", default="urchade/gliner_multi-v2.1")
     extract_batch.add_argument("--gliner-threshold", type=float, default=0.35)
+    extract_batch.add_argument("--hf-model", default="jjzha/escoxlmr_skill_extraction")
+    extract_batch.add_argument(
+        "--hf-aggregation-strategy",
+        choices=["none", "simple", "first", "average", "max"],
+        default="simple",
+    )
+    extract_batch.add_argument(
+        "--hf-entity-labels",
+        default="",
+        help="Comma-separated HF token classification labels to keep. Empty means keep all non-O entities.",
+    )
+    extract_batch.add_argument("--hf-device", type=int, default=-1, help="HF pipeline device. Use -1 for CPU.")
     extract_batch.add_argument("--top-k", type=int, default=5)
     extract_batch.add_argument("--score-threshold", type=float, default=0.35)
     extract_batch.add_argument("--max-records", type=int, default=None)
@@ -158,6 +176,14 @@ def _make_extractor(args: argparse.Namespace):
                 preset=args.ollama_prompt_preset,
                 custom_prompt=custom_prompt,
             ),
+        )
+    if args.extractor == "hf_token_classifier":
+        entity_labels = [item.strip() for item in args.hf_entity_labels.split(",") if item.strip()]
+        return HFTokenClassificationExtractor(
+            model_name=args.hf_model,
+            aggregation_strategy=args.hf_aggregation_strategy,
+            entity_labels=entity_labels,
+            device=args.hf_device,
         )
     return GLiNERExtractor(
         model_name=args.gliner_model,

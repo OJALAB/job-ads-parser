@@ -182,5 +182,83 @@ class GLiNERExtractor:
         return mentions
 
 
+class HFTokenClassificationExtractor:
+    def __init__(
+        self,
+        model_name: str,
+        aggregation_strategy: str = "simple",
+        entity_labels: list[str] | None = None,
+        device: int = -1,
+    ) -> None:
+        try:
+            from transformers import pipeline
+        except ImportError as exc:
+            raise RuntimeError(
+                "HF token classification extractor requires `transformers` and `torch`. Install with `.[hf]`."
+            ) from exc
+
+        self.model_name = model_name
+        self.aggregation_strategy = aggregation_strategy
+        self.entity_labels = {label.casefold() for label in (entity_labels or [])}
+        self.pipeline = pipeline(
+            "token-classification",
+            model=model_name,
+            tokenizer=model_name,
+            aggregation_strategy=aggregation_strategy,
+            device=device,
+        )
+
+    def extract(self, record: dict, text: str) -> list[SkillMention]:
+        raw_entities = self.pipeline(text)
+        mentions: list[SkillMention] = []
+        seen: set[str] = set()
+        language = str(record.get("language", "") or "").strip().lower() or None
+
+        for entity in raw_entities:
+            label = _normalize_hf_entity_label(entity.get("entity_group") or entity.get("entity"))
+            if self.entity_labels and label not in self.entity_labels:
+                continue
+
+            raw_mention = _clean_hf_mention_text(entity.get("word") or entity.get("text") or "")
+            if not raw_mention:
+                continue
+
+            mention = normalize_extracted_skill_mention(raw_mention, language=language)
+            normalized = mention.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            mentions.append(
+                SkillMention(
+                    text=mention,
+                    raw_text=raw_mention if raw_mention != mention else None,
+                    label=label or "skill",
+                    score=float(entity["score"]) if "score" in entity else None,
+                    start=int(entity["start"]) if "start" in entity else None,
+                    end=int(entity["end"]) if "end" in entity else None,
+                )
+            )
+        return mentions
+
+
+def _normalize_hf_entity_label(value: object) -> str:
+    label = str(value or "").strip()
+    if not label:
+        return ""
+    if label.startswith(("B-", "I-")):
+        label = label[2:]
+    return label.casefold()
+
+
+def _clean_hf_mention_text(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.replace(" ##", "")
+    text = text.replace("##", "")
+    text = text.replace("▁", " ")
+    return " ".join(text.split())
+
+
 def mentions_to_json(mentions: list[SkillMention]) -> list[dict]:
     return [asdict(mention) for mention in mentions]

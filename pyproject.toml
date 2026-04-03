@@ -22,11 +22,21 @@ embedding = [
 gliner = [
   "gliner>=0.2.16"
 ]
+hf = [
+  "accelerate>=1.2",
+  "sentencepiece>=0.2.0",
+  "torch>=2.2",
+  "transformers>=4.49"
+]
 dev = [
   "pytest>=8.2",
   "numpy>=1.26",
   "sentence-transformers>=3.0",
-  "gliner>=0.2.16"
+  "gliner>=0.2.16",
+  "accelerate>=1.2",
+  "sentencepiece>=0.2.0",
+  "torch>=2.2",
+  "transformers>=4.49"
 ]
 
 [project.scripts]

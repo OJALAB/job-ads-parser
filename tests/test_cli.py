@@ -118,6 +118,38 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(extractor.system_prompt, BIELIK_PL_OLLAMA_PROMPT)
 
+    def test_make_extractor_uses_hf_token_classifier(self) -> None:
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "extract-batch",
+                "--input",
+                "dummy.jsonl",
+                "--output",
+                "dummy-out.jsonl",
+                "--index-dir",
+                "dummy-index",
+                "--extractor",
+                "hf_token_classifier",
+                "--hf-model",
+                "jjzha/escoxlmr_skill_extraction",
+                "--hf-aggregation-strategy",
+                "simple",
+                "--hf-entity-labels",
+                "SKILL,TRANSVERSAL",
+            ]
+        )
+
+        with patch("esco_skill_batch.cli.HFTokenClassificationExtractor") as extractor_cls:
+            cli._make_extractor(args)
+
+        extractor_cls.assert_called_once_with(
+            model_name="jjzha/escoxlmr_skill_extraction",
+            aggregation_strategy="simple",
+            entity_labels=["SKILL", "TRANSVERSAL"],
+            device=-1,
+        )
+
     def test_cli_evaluate_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)

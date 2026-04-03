@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
+import types
 import unittest
 import urllib.error
 from unittest.mock import patch
 
-from esco_skill_batch.extractors import OllamaExtractor, PassthroughExtractor
+from esco_skill_batch.extractors import HFTokenClassificationExtractor, OllamaExtractor, PassthroughExtractor
 from esco_skill_batch.normalization import normalize_extracted_skill_mention
 from esco_skill_batch.prompt_presets import BIELIK_PL_OLLAMA_PROMPT
 
@@ -189,6 +191,47 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(normalize_extracted_skill_mention("zna Python", language="pl"), "Python")
         self.assertEqual(normalize_extracted_skill_mention("programowanie w SQL", language="pl"), "SQL")
         self.assertEqual(normalize_extracted_skill_mention("programming in Python", language="pl"), "programowanie w Pythonie")
+
+    def test_hf_token_classification_extractor_parses_entities(self) -> None:
+        class FakePipeline:
+            def __call__(self, text):
+                return [
+                    {
+                        "entity_group": "SKILL",
+                        "word": "Python",
+                        "score": 0.99,
+                        "start": 5,
+                        "end": 11,
+                    },
+                    {
+                        "entity_group": "SKILL",
+                        "word": "SQL",
+                        "score": 0.95,
+                        "start": 16,
+                        "end": 19,
+                    },
+                    {
+                        "entity_group": "SKILL",
+                        "word": "SQL",
+                        "score": 0.90,
+                        "start": 16,
+                        "end": 19,
+                    },
+                ]
+
+        fake_transformers = types.SimpleNamespace(
+            pipeline=lambda *args, **kwargs: FakePipeline(),
+        )
+
+        with patch.dict(sys.modules, {"transformers": fake_transformers}):
+            extractor = HFTokenClassificationExtractor(
+                model_name="jjzha/escoxlmr_skill_extraction",
+                aggregation_strategy="simple",
+            )
+            mentions = extractor.extract({"language": "pl"}, "tekst Python i SQL")
+
+        self.assertEqual([item.text for item in mentions], ["Python", "SQL"])
+        self.assertEqual([item.label for item in mentions], ["skill", "skill"])
 
 
 if __name__ == "__main__":
